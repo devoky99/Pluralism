@@ -1,0 +1,48 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core-linux:
+    name: Kern-Tests (Linux)
+    runs-on: ubuntu-latest
+    container: swift:6.1
+    steps:
+      - uses: actions/checkout@v4
+      - name: Swift-Version
+        run: swift --version
+      - name: Tests PluralismCore
+        run: swift test --parallel
+
+  macos-app:
+    name: App bauen (macOS, Apple Silicon)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Xcode und Swift
+        run: |
+          xcodebuild -version
+          swift --version
+          sw_vers
+      - name: Tests
+        run: swift test --parallel
+      - name: App bauen und signieren
+        run: ./scripts/build-app.sh release
+      - name: Paket für den Download
+        run: |
+          cd build
+          ditto -c -k --keepParent Pluralism.app Pluralism.zip
+      - name: App hochladen
+        uses: actions/upload-artifact@v4
+        with:
+          name: Pluralism-app
+          path: build/Pluralism.zip
+          retention-days: 14

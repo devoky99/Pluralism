@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Apples Virtualization.framework (Linux-VMs). Funktioniert mit Ad-hoc-Signatur. -->
+	<key>com.apple.security.virtualization</key>
+	<true/>
+	<!-- Hypervisor.framework, für einen späteren eigenen VMM-Kern. QEMU signiert sich selbst. -->
+	<key>com.apple.security.hypervisor</key>
+	<true/>
+	<!-- Mikrofon für VMs (nur wenn in der VM eingeschaltet). -->
+	<key>com.apple.security.device.audio-input</key>
+	<true/>
+</dict>
+</plist>
