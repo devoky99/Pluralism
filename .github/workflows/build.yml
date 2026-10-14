@@ -10,6 +10,9 @@ concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: write
+
 jobs:
   core-linux:
     name: Kern-Tests (Linux)
@@ -17,25 +20,55 @@ jobs:
     container: swift:6.1
     steps:
       - uses: actions/checkout@v4
-      - name: Swift-Version
-        run: swift --version
       - name: Tests PluralismCore
-        run: swift test --parallel
+        run: |
+          mkdir -p "$RUNNER_TEMP/logs"
+          swift --version 2>&1 | tee "$RUNNER_TEMP/logs/00-version.log"
+          set -o pipefail
+          swift test --parallel 2>&1 | tee "$RUNNER_TEMP/logs/10-test.log"
+        shell: bash
+      - name: Fehler als Hinweise
+        if: failure()
+        shell: bash
+        run: |
+          grep -hE "error:|failed" "$RUNNER_TEMP"/logs/*.log | head -40 | while IFS= read -r line; do echo "::error::$line"; done || true
+      - name: Logs in Branch ci-logs-linux
+        if: always()
+        shell: bash
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd "$RUNNER_TEMP/logs"
+          git init -q
+          git config user.name "ci"
+          git config user.email "ci@users.noreply.github.com"
+          git checkout -q -b ci-logs-linux
+          echo "${{ github.sha }} ${{ job.status }}" > 99-commit.txt
+          git add -A
+          git commit -q -m "CI-Logs ${{ github.sha }}"
+          git push -q -f "https://x-access-token:${TOKEN}@github.com/${{ github.repository }}" HEAD:ci-logs-linux
 
   macos-app:
     name: App bauen (macOS, Apple Silicon)
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
-      - name: Xcode und Swift
+      - name: Umgebung
         run: |
-          xcodebuild -version
-          swift --version
-          sw_vers
+          mkdir -p "$RUNNER_TEMP/logs"
+          { xcodebuild -version; swift --version; sw_vers; } 2>&1 | tee "$RUNNER_TEMP/logs/00-version.log"
+      - name: App kompilieren
+        run: |
+          set -o pipefail
+          swift build --product Pluralism 2>&1 | tee "$RUNNER_TEMP/logs/10-build.log"
       - name: Tests
-        run: swift test --parallel
-      - name: App bauen und signieren
-        run: ./scripts/build-app.sh release
+        run: |
+          set -o pipefail
+          swift test --parallel 2>&1 | tee "$RUNNER_TEMP/logs/20-test.log"
+      - name: App-Bundle bauen und signieren
+        run: |
+          set -o pipefail
+          ./scripts/build-app.sh release 2>&1 | tee "$RUNNER_TEMP/logs/30-bundle.log"
       - name: Paket für den Download
         run: |
           cd build
@@ -46,3 +79,21 @@ jobs:
           name: Pluralism-app
           path: build/Pluralism.zip
           retention-days: 14
+      - name: Fehler als Hinweise
+        if: failure()
+        run: |
+          grep -hE "error:|failed" "$RUNNER_TEMP"/logs/*.log | head -40 | while IFS= read -r line; do echo "::error::$line"; done || true
+      - name: Logs in Branch ci-logs-macos
+        if: always()
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd "$RUNNER_TEMP/logs"
+          git init -q
+          git config user.name "ci"
+          git config user.email "ci@users.noreply.github.com"
+          git checkout -q -b ci-logs-macos
+          echo "${{ github.sha }} ${{ job.status }}" > 99-commit.txt
+          git add -A
+          git commit -q -m "CI-Logs ${{ github.sha }}"
+          git push -q -f "https://x-access-token:${TOKEN}@github.com/${{ github.repository }}" HEAD:ci-logs-macos
