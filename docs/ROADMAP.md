@@ -2,6 +2,8 @@
 
 Aufwand: S = Tage, M = 1 bis 2 Wochen, L = Wochen bis Monate, XL = Forschungsprojekt.
 
+Ausführlicher Plan für Platte, Netzwerk, 3D und eigenen Hypervisor-Kern: [PLAN-LEISTUNG.md](PLAN-LEISTUNG.md).
+
 Leitlinie: **Isolation.** Pluralism baut keine Kanäle zwischen Mac und Gast (keine Zwischenablage, keine
 geteilten Ordner, keine Gastagenten, kein Coherence). Weiterentwickelt werden Netzwerk, Peripherie,
 Leistung und Verwaltung.
