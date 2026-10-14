@@ -20,6 +20,7 @@ struct NewVMWizard: View {
     @State private var memoryGiB = 8
     @State private var diskGiB = 64
     @State private var engine: VMEngineKind = .appleVirtualization
+    @State private var appleDiskFormat: DiskFormat = .raw
     @State private var creating = false
     @State private var errorText: String?
 
@@ -258,6 +259,13 @@ struct NewVMWizard: View {
                             Text(kind.displayName).tag(kind)
                         }
                     }
+                    if engine == .appleVirtualization && model.host.macOSMajorVersion >= 26 {
+                        Picker("Plattenformat", selection: $appleDiskFormat) {
+                            Text(DiskFormat.raw.displayName).tag(DiskFormat.raw)
+                            Text(DiskFormat.asif.displayName).tag(DiskFormat.asif)
+                        }
+                        Hint("ASIF ist Apples neues Format: bleibt auch beim Kopieren auf andere Datenträger klein.")
+                    }
                 }
                 Button("Empfehlung übernehmen") { applyRecommendations(keepEngine: true) }
             }
@@ -350,7 +358,7 @@ struct NewVMWizard: View {
         config.engine = os == .windows ? .qemu : engine
         config.cpuCount = cpuCount
         config.memoryMiB = memoryGiB * 1024
-        let format: DiskFormat = config.engine == .qemu ? .qcow2 : .raw
+        let format: DiskFormat = config.engine == .qemu ? .qcow2 : appleDiskFormat
         config.disk = DiskSettings(sizeGiB: diskGiB, format: format)
         config.media.installerISOPath = installerPath.isEmpty ? nil : installerPath
         config.media.attachInstaller = !installerPath.isEmpty

@@ -181,6 +181,13 @@ final class QEMUTests: XCTestCase {
         XCTAssertTrue(values(after: "-netdev", in: plan.qemu.arguments).first?.contains("hostfwd") == false)
     }
 
+    func testCustomAccelReplacesDefault() throws {
+        var config = windowsConfig()
+        config.advanced.extraQEMUArguments = ["-accel", "hvf,kernel-irqchip=off"]
+        let plan = try makePlan(config)
+        XCTAssertEqual(values(after: "-accel", in: plan.qemu.arguments), ["hvf,kernel-irqchip=off"])
+    }
+
     func testNoNetworkMode() throws {
         var config = windowsConfig()
         config.network.mode = .none

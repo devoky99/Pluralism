@@ -79,7 +79,10 @@ public enum QEMUCommandBuilder {
             machine += ",virtualization=on"
         }
         args += ["-machine", machine]
-        args += ["-accel", "hvf"]
+        // Eigene -accel-Angabe in den Zusatzargumenten (z. B. hvf,kernel-irqchip=off) hat Vorrang.
+        if !config.advanced.extraQEMUArguments.contains("-accel") {
+            args += ["-accel", "hvf"]
+        }
         var cpu = "host"
         if config.advanced.hideSME {
             cpu += ",sme=off"

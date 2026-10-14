@@ -22,6 +22,8 @@ final class RFBDisplayView: NSView {
     private var scrollAccumulatorY: CGFloat = 0
     private var scrollAccumulatorX: CGFloat = 0
     private var keyWindowObserver: NSObjectProtocol?
+    /// Letztes Bild der VM. AppKit setzt es in updateLayer() als Inhalt der Ebene.
+    private var currentImage: CGImage?
 
     /// Mac-Kürzel, die beim Mac bleiben.
     private static let macOnlyCommandKeys: Set<UInt16> = [0x0C, 0x0D, 0x04, 0x2E, 0x30, 0x32, 0x2F]
@@ -29,10 +31,8 @@ final class RFBDisplayView: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
-        layer?.backgroundColor = NSColor.black.cgColor
-        layer?.contentsGravity = .resizeAspect
-        layer?.magnificationFilter = .linear
-        layer?.minificationFilter = .linear
+        layerContentsRedrawPolicy = .onSetNeedsDisplay
+        configureLayer()
     }
 
     required init?(coder: NSCoder) {
@@ -62,11 +62,29 @@ final class RFBDisplayView: NSView {
 
     func detach() {
         connection = nil
-        layer?.contents = nil
+        currentImage = nil
+        needsDisplay = true
     }
 
     private func refresh() {
-        layer?.contents = connection?.makeImage()
+        currentImage = connection?.makeImage()
+        needsDisplay = true
+    }
+
+    // Die Ebene wird über updateLayer() befüllt. So überschreibt AppKit das Bild nicht,
+    // wenn sich die Fenstergröße ändert.
+    override var wantsUpdateLayer: Bool { true }
+
+    override func updateLayer() {
+        configureLayer()
+        layer?.contents = currentImage
+    }
+
+    private func configureLayer() {
+        layer?.backgroundColor = NSColor.black.cgColor
+        layer?.contentsGravity = .resizeAspect
+        layer?.magnificationFilter = .linear
+        layer?.minificationFilter = .linear
     }
 
     // MARK: Fenster und Fokus

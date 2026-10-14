@@ -18,8 +18,8 @@ Die App ist in zwei Teile getrennt:
   VNC/RFB-Protokoll, Tastatur-Tabellen, Ressourcenempfehlungen). Läuft auch unter Linux und ist vollständig getestet.
 - `Sources/Pluralism`: die macOS-App mit SwiftUI und AppKit.
 
-Mehr dazu in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), der Plan bis zur Parallels-Parität steht in
-[docs/ROADMAP.md](docs/ROADMAP.md). Die Recherche liegt in [docs/research/](docs/research/).
+Anleitung: [docs/ERSTE-SCHRITTE.md](docs/ERSTE-SCHRITTE.md). Aufbau: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Plan bis zur Parallels-Parität: [docs/ROADMAP.md](docs/ROADMAP.md). Recherche: [docs/research/](docs/research/).
 
 ## Was Version 0.1 kann
 
