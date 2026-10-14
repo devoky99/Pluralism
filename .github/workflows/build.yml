@@ -6,6 +6,11 @@ on:
     tags: ['v*']
   pull_request:
   workflow_dispatch:
+    inputs:
+      release:
+        description: "Version veröffentlichen (z. B. v0.1.0), leer lassen für einen normalen Build"
+        required: false
+        default: ""
 
 concurrency:
   group: build-${{ github.ref }}
@@ -81,19 +86,26 @@ jobs:
           path: build/Pluralism.zip
           retention-days: 14
       - name: Release veröffentlichen
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.release != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_RELEASE: ${{ inputs.release }}
         run: |
-          TAG="${GITHUB_REF_NAME}"
+          if [ -n "$INPUT_RELEASE" ]; then TAG="$INPUT_RELEASE"; else TAG="$GITHUB_REF_NAME"; fi
           NOTES="docs/release-notes/${TAG}.md"
           [ -f "$NOTES" ] || NOTES="README.md"
-          cp build/Pluralism.zip "build/Pluralism-${TAG}.zip"
-          gh release create "$TAG" "build/Pluralism-${TAG}.zip" \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "Pluralism ${TAG}" \
-            --notes-file "$NOTES" \
-            --prerelease
+          ASSET="build/Pluralism-${TAG}.zip"
+          cp build/Pluralism.zip "$ASSET"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$ASSET" --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$TAG" "$ASSET" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "Pluralism ${TAG}" \
+              --notes-file "$NOTES" \
+              --prerelease
+          fi
       - name: Fehler als Hinweise
         if: failure()
         run: |
