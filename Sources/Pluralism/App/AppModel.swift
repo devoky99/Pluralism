@@ -133,9 +133,6 @@ final class AppModel: ObservableObject {
                             virtioISO: request.virtioISO)
                         config.media.hasUnattendMedia = true
                     }
-                    if config.guestOS == .linux {
-                        try? GuestMediaBuilder.buildLinuxToolsMedia(bundle: bundle)
-                    }
                     try bundle.save(config)
                 } catch {
                     try? FileManager.default.removeItem(at: bundle.url)

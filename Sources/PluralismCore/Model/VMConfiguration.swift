@@ -130,16 +130,13 @@ public struct MediaSettings: Codable, Equatable, Sendable {
     public var driverISOPath: String?
     /// Ob im Bundle ein Antwortdatei-ISO (unattend.iso) liegt.
     public var hasUnattendMedia: Bool
-    /// Ob das Medium mit den Pluralism Tools (pluralism-tools.iso) angehängt wird.
-    public var attachGuestTools: Bool
 
     public init(installerISOPath: String? = nil, attachInstaller: Bool = true, driverISOPath: String? = nil,
-                hasUnattendMedia: Bool = false, attachGuestTools: Bool = false) {
+                hasUnattendMedia: Bool = false) {
         self.installerISOPath = installerISOPath
         self.attachInstaller = attachInstaller
         self.driverISOPath = driverISOPath
         self.hasUnattendMedia = hasUnattendMedia
-        self.attachGuestTools = attachGuestTools
     }
 
     public init(from decoder: Decoder) throws {
@@ -148,7 +145,6 @@ public struct MediaSettings: Codable, Equatable, Sendable {
         attachInstaller = try c.decode(.attachInstaller, default: true)
         driverISOPath = try c.decodeIfPresent(String.self, forKey: .driverISOPath)
         hasUnattendMedia = try c.decode(.hasUnattendMedia, default: false)
-        attachGuestTools = try c.decode(.attachGuestTools, default: false)
     }
 }
 
@@ -173,7 +169,7 @@ public enum QEMUDisplayDevice: String, Codable, CaseIterable, Identifiable, Send
 public enum QEMUDisplayFrontend: String, Codable, CaseIterable, Identifiable, Sendable {
     /// Im Pluralism-Fenster über eine lokale VNC-Verbindung.
     case integrated
-    /// In QEMUs eigenem Cocoa-Fenster (inklusive QEMU-Zwischenablage).
+    /// In QEMUs eigenem Cocoa-Fenster.
     case separateWindow
 
     public var id: String { rawValue }
@@ -272,40 +268,16 @@ public struct NetworkSettings: Codable, Equatable, Sendable {
     }
 }
 
-/// Ein Ordner des Macs, der im Gast sichtbar ist.
-public struct SharedFolder: Codable, Equatable, Identifiable, Sendable {
-    public var id: UUID
-    /// Name im Gast (Unterordner der Freigabe "pluralism").
-    public var name: String
-    public var hostPath: String
-    public var readOnly: Bool
-
-    public init(id: UUID = UUID(), name: String, hostPath: String, readOnly: Bool = false) {
-        self.id = id
-        self.name = SharedFolder.sanitizedName(name)
-        self.hostPath = hostPath
-        self.readOnly = readOnly
-    }
-
-    /// Erlaubt nur Zeichen, die in Linux und Windows als Ordnername unproblematisch sind.
-    public static func sanitizedName(_ raw: String) -> String {
-        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_."))
-        let mapped = raw.unicodeScalars.map { allowed.contains($0) ? Character($0) : "_" }
-        let result = String(mapped).trimmingCharacters(in: CharacterSet(charactersIn: "._"))
-        return result.isEmpty ? "Ordner" : String(result.prefix(64))
-    }
-}
-
-public struct IntegrationSettings: Codable, Equatable, Sendable {
-    /// Gemeinsame Zwischenablage (SPICE-Agent im Gast nötig).
-    public var clipboard: Bool
+/// Peripherie der VM. Pluralism-VMs sind isoliert: es gibt keine gemeinsame Zwischenablage,
+/// keine geteilten Ordner und keinen Kanal zwischen Mac und Gast. Nach außen gehen nur
+/// Netzwerk und Peripherie (Bildschirm, Tastatur, Maus, Ton).
+public struct PeripheralSettings: Codable, Equatable, Sendable {
     public var audioOutput: Bool
     public var audioInput: Bool
     /// Tastenkürzel wie Cmd+Tab an den Gast weiterreichen (Apple-Engine).
     public var captureSystemKeys: Bool
 
-    public init(clipboard: Bool = true, audioOutput: Bool = true, audioInput: Bool = false, captureSystemKeys: Bool = false) {
-        self.clipboard = clipboard
+    public init(audioOutput: Bool = true, audioInput: Bool = false, captureSystemKeys: Bool = false) {
         self.audioOutput = audioOutput
         self.audioInput = audioInput
         self.captureSystemKeys = captureSystemKeys
@@ -313,8 +285,7 @@ public struct IntegrationSettings: Codable, Equatable, Sendable {
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        let d = IntegrationSettings()
-        clipboard = try c.decode(.clipboard, default: d.clipboard)
+        let d = PeripheralSettings()
         audioOutput = try c.decode(.audioOutput, default: d.audioOutput)
         audioInput = try c.decode(.audioInput, default: d.audioInput)
         captureSystemKeys = try c.decode(.captureSystemKeys, default: d.captureSystemKeys)
@@ -490,8 +461,7 @@ public struct VMConfiguration: Codable, Equatable, Identifiable, Sendable {
     public var media: MediaSettings
     public var display: DisplaySettings
     public var network: NetworkSettings
-    public var sharedFolders: [SharedFolder]
-    public var integration: IntegrationSettings
+    public var peripherals: PeripheralSettings
     public var advanced: AdvancedSettings
     public var windows: WindowsSettings
     public var notes: String
@@ -501,7 +471,7 @@ public struct VMConfiguration: Codable, Equatable, Identifiable, Sendable {
     public init(id: UUID = UUID(), name: String, guestOS: GuestOS, engine: VMEngineKind? = nil,
                 cpuCount: Int, memoryMiB: Int, disk: DiskSettings, media: MediaSettings = MediaSettings(),
                 display: DisplaySettings = DisplaySettings(), network: NetworkSettings = NetworkSettings(),
-                sharedFolders: [SharedFolder] = [], integration: IntegrationSettings = IntegrationSettings(),
+                peripherals: PeripheralSettings = PeripheralSettings(),
                 advanced: AdvancedSettings = AdvancedSettings(), windows: WindowsSettings = WindowsSettings(),
                 notes: String = "", createdAt: Date = Date(), lastStartedAt: Date? = nil) {
         self.schemaVersion = VMConfiguration.currentSchemaVersion
@@ -515,8 +485,7 @@ public struct VMConfiguration: Codable, Equatable, Identifiable, Sendable {
         self.media = media
         self.display = display
         self.network = network
-        self.sharedFolders = sharedFolders
-        self.integration = integration
+        self.peripherals = peripherals
         self.advanced = advanced
         self.windows = windows
         self.notes = notes
@@ -537,8 +506,7 @@ public struct VMConfiguration: Codable, Equatable, Identifiable, Sendable {
         media = try c.decode(.media, default: MediaSettings())
         display = try c.decode(.display, default: DisplaySettings())
         network = try c.decode(.network, default: NetworkSettings())
-        sharedFolders = try c.decode(.sharedFolders, default: [])
-        integration = try c.decode(.integration, default: IntegrationSettings())
+        peripherals = try c.decode(.peripherals, default: PeripheralSettings())
         advanced = try c.decode(.advanced, default: AdvancedSettings())
         windows = try c.decode(.windows, default: WindowsSettings())
         notes = try c.decode(.notes, default: "")
@@ -562,7 +530,6 @@ public struct VMConfiguration: Codable, Equatable, Identifiable, Sendable {
         if guestOS == .windows {
             config.display = DisplaySettings(widthPixels: 1920, heightPixels: 1080, autoResize: false,
                                              qemuDevice: .ramfb, qemuFrontend: .integrated)
-            config.windows.rdpHostPort = 33389
             config.advanced.serialLog = false
         }
         return config
@@ -603,12 +570,6 @@ public struct VMConfiguration: Codable, Equatable, Identifiable, Sendable {
         }
         if advanced.nestedVirtualization && !host.supportsNestedVirtualization {
             issues.append("Verschachtelte Virtualisierung braucht einen M3-Chip oder neuer und macOS 15.")
-        }
-        var seen = Set<String>()
-        for folder in sharedFolders {
-            if !seen.insert(folder.name.lowercased()).inserted {
-                issues.append("Der Freigabename \(folder.name) ist doppelt vergeben.")
-            }
         }
         var hostPorts = Set<Int>()
         let forwards = network.portForwards + (windows.rdpHostPort.map { [PortForward(hostPort: $0, guestPort: 3389)] } ?? [])

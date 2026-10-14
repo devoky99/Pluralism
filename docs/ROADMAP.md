@@ -1,50 +1,54 @@
-# Roadmap: von 0.1 zur Parallels-Parität
+# Roadmap
 
 Aufwand: S = Tage, M = 1 bis 2 Wochen, L = Wochen bis Monate, XL = Forschungsprojekt.
-Grundlage: [research/feature-parity.md](research/feature-parity.md).
+
+Leitlinie: **Isolation.** Pluralism baut keine Kanäle zwischen Mac und Gast (keine Zwischenablage, keine
+geteilten Ordner, keine Gastagenten, kein Coherence). Weiterentwickelt werden Netzwerk, Peripherie,
+Leistung und Verwaltung.
 
 ## Stand 0.1 (erledigt)
 
 - [x] VM-Bibliothek, Assistent, Einstellungen, Klonen, Papierkorb
-- [x] Linux über Virtualization.framework: UEFI, virtio, NAT, automatische Auflösung, virtiofs,
-      Zwischenablage, Ton, Mikrofon, verschachtelte Virtualisierung, Zustand sichern, ISO im Betrieb
+- [x] Linux über Virtualization.framework: UEFI, virtio, NAT, automatische Auflösung, Ton, Mikrofon,
+      verschachtelte Virtualisierung, Zustand sichern, ISO im Betrieb
 - [x] Windows 11 ARM über QEMU + HVF: vollautomatische Installation mit Treibern, NVMe, TPM optional,
-      Secure Boot optional, Bild im eigenen Fenster, Mac-Tastenkürzel, Strg+Alt+Entf, RDP-Weiterleitung
+      Secure Boot optional, Bild im eigenen Fenster, Mac-Tastenkürzel, Strg+Alt+Entf
+- [x] Isolation: keine Zwischenablage, keine Freigaben, keine Gastagenten, RDP nur ohne Umleitungen
 - [x] Snapshots per APFS-Klon, Logs, Ressourcenempfehlung für den M4 Pro
 - [x] Tests für den Kern, CI für Linux und macOS
 
-## 0.2: Windows fühlt sich an wie Parallels
+## 0.2: Netzwerk
 
 | Aufgabe | Aufwand | Weg |
 |---|---|---|
-| Pluralism Tools für Windows | M | Eigener ARM64-Agent über virtio-serial (Treiber vioserial aus virtio-win): Zwischenablage in beide Richtungen, Auflösung, Zeit nach dem Fortsetzen |
-| Zwischenablage im Pluralism-Fenster | M | VNC „Extended Clipboard“ (Pseudo-Kodierung 0xC0A1E5CE) im RFB-Client, zlib-Daten |
-| Mauszeiger des Gasts als Mac-Cursor | S | RFB-Kodierung „Cursor“ (-239), NSCursor aus Bild und Maske |
-| Dynamische Auflösung | M | virtio-gpu + viogpudo, Fenstergröße per VNC `SetDesktopSize` bzw. QEMU-UI-Info weitergeben |
-| Geteilte Ordner für Windows | M | QEMU `-netdev user,smb=` mit Samba aus Homebrew, alternativ SPICE-WebDAV |
-| Snapshots im laufenden Betrieb | M | QMP `snapshot-save` / `snapshot-load` für qcow2 |
+| Portweiterleitung für Linux-VMs | M | macOS 26: `VZVmnetNetworkDeviceAttachment` mit vmnet-Portregeln |
+| Feste IP-Adressen | S | vmnet-DHCP-Reservierungen (macOS 26) |
+| Netzwerkmodi wählbar | M | „Nur Internet“, „Nur Mac“ (host-only), „Abgeschottet“ (kein Netz) über vmnet |
+| Netz zwischen VMs | M | gemeinsames vmnet-Netz für mehrere VMs, auf Wunsch ohne Internet |
+| Bridged-Netz | – | braucht `com.apple.vm.networking` von Apple; nur mit Freigabe möglich |
+
+## 0.3: Peripherie
+
+| Aufgabe | Aufwand | Weg |
+|---|---|---|
+| USB-Geräte für Linux | M | macOS 27: `VZUSBPassthroughDeviceConfiguration` + AccessoryAccess (Entitlement-Frage klären) |
+| USB-Geräte für Windows | M | QEMU `usb-host` braucht Root oder `com.apple.vm.device-access`; Alternative prüfen |
+| Mauszeiger als Mac-Cursor (Windows) | S | VNC-Kodierung „Cursor“ (-239), NSCursor aus Bild und Maske |
+| Dynamische Auflösung (Windows) | M | virtio-gpu + viogpudo, Fenstergröße per VNC `SetDesktopSize` weitergeben |
+| Mehrere Bildschirme | M | mehrere Scanouts (Apple) bzw. mehrere virtio-gpu-Ausgänge (QEMU) |
+| Mikrofon für Windows | M | QEMUs CoreAudio kann keine Aufnahme; eigener Audio-Backend-Weg nötig |
+
+## 0.4: Verwaltung und Sicherheit
+
+| Aufgabe | Aufwand | Weg |
+|---|---|---|
 | Echtes TPM 2.0 | M | Eigener QEMU-Build mit CRB-TPM-Patch (`tpm-crb-device`) und Secure-Boot-Firmware |
-| Netzwerk mit Portweiterleitung für Linux | M | macOS 26: `VZVmnetNetworkDeviceAttachment` mit vmnet-Portregeln |
-| Kommandozeile `pluralismctl` | S | list, start, stop, ssh, ip über eine kleine XPC- oder Socket-Schnittstelle |
-
-## 0.3: Komfort für Linux
-
-| Aufgabe | Aufwand | Weg |
-|---|---|---|
-| Linux unbeaufsichtigt installieren | M | cloud-init (NoCloud, Laufwerk `CIDATA`) mit Cloud-Images, Ubuntu-Autoinstall |
-| Gastagent über vsock | M | Zeit nach dem Fortsetzen, IP-Adresse anzeigen, sauberes Herunterfahren, Muster: Apples `containerization` |
-| Geschichtete Platten | M | macOS 27 DiskImageKit: Basis plus Overlays, schnelle Klone und Rollback |
-| USB-Geräte durchreichen | M | macOS 27 `VZUSBPassthroughDeviceConfiguration` + AccessoryAccess (Entitlement-Frage klären) |
 | Secure Boot für Linux | S | macOS 27 `VZEFIVariableStore.enrollDefaultSecureBootSignatures()` |
-| ASIF als Standard | S | ab macOS 26 Plattenformat ASIF für neue Linux-VMs |
-
-## 0.4: Coherence (Apps wie Mac-Fenster)
-
-| Aufgabe | Aufwand | Weg |
-|---|---|---|
-| Windows-Apps als einzelne Mac-Fenster | L bis XL | RDP RemoteApp (RAIL): Cocoa-Client auf Basis von IronRDP (MIT/Apache) oder libfreerdp; Gast braucht Pro |
-| Startmenü-Apps im Dock | M | Gastagent listet Apps, Pluralism erzeugt Stub-Apps mit Symbol |
-| Linux-Fenster einzeln | L | waypipe über vsock, Achtung GPL-3.0 |
+| Snapshots im laufenden Betrieb (Windows) | M | QMP `snapshot-save` / `snapshot-load` für qcow2 |
+| Geschichtete Platten | M | macOS 27 DiskImageKit: Basis plus Overlays, schnelle Klone und Rollback |
+| Verschlüsselte VMs | M | VM-Ordner in verschlüsseltem APFS-Image |
+| Linux unbeaufsichtigt installieren | M | cloud-init (NoCloud, Laufwerk `CIDATA`) mit Cloud-Images, Ubuntu-Autoinstall |
+| Kommandozeile `pluralismctl` | S | list, start, stop, status |
 
 ## 0.5: Grafik
 
@@ -52,21 +56,26 @@ Grundlage: [research/feature-parity.md](research/feature-parity.md).
 |---|---|---|
 | 3D für Linux (Apple-Engine) | L | macOS 27 `VZCustomVirtioDevice`: eigenes virtio-gpu mit virglrenderer + ANGLE auf Metal |
 | 3D für Linux (QEMU-Engine) | M | QEMU mit virglrenderer/Venus und MoltenVK oder KosmicKrisp |
-| DirectX für Windows | XL | Experimentelle virtio-gpu-3D-Treiber für Windows ARM verfolgen (noch instabil), Host-Seite DXMT |
+| DirectX für Windows | XL | experimentelle virtio-gpu-3D-Treiber für Windows ARM beobachten |
 
 ## Langfristig: eigener Hypervisor-Kern
 
 Der Weg von Parallels: statt QEMU ein eigener VMM direkt auf Hypervisor.framework.
 
 - vCPU-Threads, Speicher (`hv_vm_map`), GICv3 über `hv_gic_*` (macOS 15), Timer
-- Geräte: virtio-blk/-net/-gpu/-console über PCIe, PL011, PL031, TPM-CRB, ramfb
+- Geräte: virtio-blk/-net/-gpu über PCIe, PL011, PL031, TPM-CRB, ramfb
 - Firmware: edk2 ArmVirtQemu
-- SME/SME2-Zustand des M4 sichern und an Gäste geben (macOS 15.2 APIs), wie Parallels 27
-- Ergebnis: keine QEMU-Abhängigkeit, volle Kontrolle über Leistung und Integration
+- SME/SME2-Zustand des M4 sichern und an Gäste geben (macOS 15.2 APIs)
+- Ergebnis: keine QEMU-Abhängigkeit, volle Kontrolle über Leistung und darüber, welche Geräte ein Gast sieht
 
-## Bekannte Grenzen, die bleiben
+## Bewusst nicht geplant
 
-- **Bridged-Netz** braucht `com.apple.vm.networking`, das Apple nur auf Anfrage an Hersteller vergibt.
+- Gemeinsame Zwischenablage, geteilte Ordner, Drag-and-drop
+- Gastagenten und Gast-Werkzeuge
+- Coherence (Gast-Fenster als Mac-Fenster)
+- x86-Gäste
+
+## Bekannte Grenzen
+
 - **Windows-Lizenz:** Microsoft autorisiert Windows 11 auf Apple Silicon offiziell nur in Parallels Desktop.
   Für den privaten Einsatz braucht jede VM eine Windows-11-Pro-Lizenz.
-- **x86** ist bewusst nicht vorgesehen.

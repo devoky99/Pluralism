@@ -60,7 +60,7 @@ final class ConfigurationTests: XCTestCase {
         XCTAssertEqual(windows.engine, .qemu)
         XCTAssertEqual(windows.disk.format, .qcow2)
         XCTAssertEqual(windows.disk.fileName, "disk.qcow2")
-        XCTAssertEqual(windows.windows.rdpHostPort, 33389)
+        XCTAssertNil(windows.windows.rdpHostPort)
         XCTAssertEqual(windows.display.qemuDevice, .ramfb)
         XCTAssertTrue(windows.validationIssues(host: host).isEmpty)
     }
@@ -85,13 +85,12 @@ final class ConfigurationTests: XCTestCase {
         XCTAssertTrue(issues.contains { $0.contains("qcow2") })
     }
 
-    func testValidationCatchesDuplicatePortsAndShares() {
+    func testValidationCatchesDuplicatePorts() {
         var config = VMConfiguration.makeDefault(name: "Win", guestOS: .windows, host: host)
+        config.windows.rdpHostPort = 33389
         config.network.portForwards = [PortForward(hostPort: 33389, guestPort: 22)]
-        config.sharedFolders = [SharedFolder(name: "Daten", hostPath: "/a"), SharedFolder(name: "daten", hostPath: "/b")]
         let issues = config.validationIssues(host: host)
         XCTAssertTrue(issues.contains { $0.contains("33389") })
-        XCTAssertTrue(issues.contains { $0.contains("doppelt") })
     }
 
     func testJSONRoundTrip() throws {
@@ -99,7 +98,7 @@ final class ConfigurationTests: XCTestCase {
         // ISO 8601 speichert ganze Sekunden, daher ein Datum ohne Bruchteile.
         config.createdAt = Date(timeIntervalSince1970: 1_800_000_000)
         config.lastStartedAt = Date(timeIntervalSince1970: 1_800_000_600)
-        config.sharedFolders = [SharedFolder(name: "Projekte", hostPath: "/Users/musti/Projekte", readOnly: true)]
+        config.peripherals.audioInput = true
         config.network.portForwards = [PortForward(proto: .tcp, hostPort: 2222, guestPort: 22, label: "SSH")]
         let data = try PluralismJSON.encoder().encode(config)
         let decoded = try PluralismJSON.decoder().decode(VMConfiguration.self, from: data)
@@ -120,9 +119,30 @@ final class ConfigurationTests: XCTestCase {
         XCTAssertEqual(config.name, "Alt")
         XCTAssertEqual(config.engine, .appleVirtualization)
         XCTAssertEqual(config.disk.sizeGiB, 64)
-        XCTAssertTrue(config.integration.clipboard)
+        XCTAssertTrue(config.peripherals.audioOutput)
         XCTAssertTrue(MACAddress.isValid(config.network.macAddress))
-        XCTAssertFalse(config.media.attachGuestTools)
+    }
+
+    /// Ältere Konfigurationen mit Zwischenablage und geteilten Ordnern bleiben lesbar,
+    /// die Felder werden ignoriert (VMs sind jetzt immer isoliert).
+    func testOldSharingFieldsAreIgnored() throws {
+        let json = """
+        {
+          "id": "6C2A2E8E-0000-4000-8000-000000000002",
+          "name": "Alt mit Freigaben",
+          "guestOS": "linux",
+          "integration": { "clipboard": true, "audioOutput": false },
+          "sharedFolders": [ { "id": "6C2A2E8E-0000-4000-8000-000000000003", "name": "Daten", "hostPath": "/x", "readOnly": false } ],
+          "media": { "attachGuestTools": true }
+        }
+        """
+        let config = try PluralismJSON.decoder().decode(VMConfiguration.self, from: Data(json.utf8))
+        XCTAssertEqual(config.name, "Alt mit Freigaben")
+        XCTAssertEqual(config.peripherals, PeripheralSettings())
+        let encoded = String(decoding: try PluralismJSON.encoder().encode(config), as: UTF8.self)
+        XCTAssertFalse(encoded.contains("sharedFolders"))
+        XCTAssertFalse(encoded.contains("clipboard"))
+        XCTAssertFalse(encoded.contains("GuestTools"))
     }
 
     func testMACAddresses() {
@@ -135,11 +155,6 @@ final class ConfigurationTests: XCTestCase {
         XCTAssertFalse(MACAddress.isValid("52:54:00:00:01"))
     }
 
-    func testSharedFolderNamesAreSanitized() {
-        XCTAssertEqual(SharedFolder.sanitizedName("Meine Dateien/2026"), "Meine_Dateien_2026")
-        XCTAssertEqual(SharedFolder.sanitizedName("..."), "Ordner")
-        XCTAssertEqual(SharedFolder(name: "a b", hostPath: "/x").name, "a_b")
-    }
 
     func testRuntimePathsAreShortEnoughForSockets() {
         let config = VMConfiguration.makeDefault(name: "X", guestOS: .windows, host: host)

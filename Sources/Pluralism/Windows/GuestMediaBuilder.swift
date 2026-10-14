@@ -1,9 +1,8 @@
 import Foundation
 import PluralismCore
 
-/// Baut die Hilfsmedien, die Pluralism an Gäste anhängt:
-/// - unattend.iso für Windows (Antwortdatei, Einrichtungsskript, ARM64-Treiber)
-/// - pluralism-tools.iso für Linux (Installationsskript für Zwischenablage und Freigaben)
+/// Baut das Installationshilfe-Medium für Windows (unattend.iso): Antwortdatei,
+/// Einrichtungsskript und ARM64-Treiber für Netzwerk, Speicher und Peripherie.
 enum GuestMediaBuilder {
     struct WindowsResult {
         var detectedLanguage: String?
@@ -52,11 +51,6 @@ enum GuestMediaBuilder {
                 try fm.copyItem(at: source, to: driverRoot.appendingPathComponent(folder, isDirectory: true))
                 copied.append(folder)
             }
-            // Gasttools-Installer mitnehmen, falls vorhanden
-            let installer = mount.appendingPathComponent("virtio-win-guest-tools.exe")
-            if fm.fileExists(atPath: installer.path) {
-                try fm.copyItem(at: installer, to: staging.appendingPathComponent("virtio-win-guest-tools.exe"))
-            }
         }
 
         let input = UnattendBuilder.Input(settings: settings, password: password,
@@ -72,19 +66,6 @@ enum GuestMediaBuilder {
         return WindowsResult(detectedLanguage: language, copiedDrivers: copied)
     }
 
-    /// Erstellt das Tools-Medium für Linux-Gäste.
-    static func buildLinuxToolsMedia(bundle: VMBundle) throws {
-        let fm = FileManager.default
-        let staging = fm.temporaryDirectory.appendingPathComponent("pluralism-tools-\(UUID().uuidString)", isDirectory: true)
-        try fm.createDirectory(at: staging, withIntermediateDirectories: true)
-        defer { try? fm.removeItem(at: staging) }
-
-        let script = staging.appendingPathComponent(LinuxGuestTools.scriptName)
-        try LinuxGuestTools.installScript.write(to: script, atomically: true, encoding: .utf8)
-        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
-        try LinuxGuestTools.readme.write(to: staging.appendingPathComponent("README.txt"), atomically: true, encoding: .utf8)
-        try ISOBuilder.makeISO(from: staging, volumeName: "PLURALISM_TOOLS", output: bundle.guestToolsISOURL)
-    }
 
     private static func readme(drivers: [String]) -> String {
         var text = "Pluralism Windows-Einrichtung\r\n=============================\r\n\r\n"

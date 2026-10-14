@@ -56,14 +56,17 @@ final class QEMUTests: XCTestCase {
         XCTAssertTrue(devices.contains("usb-kbd,bus=xhci.0"))
         XCTAssertTrue(devices.contains("usb-tablet,bus=xhci.0"))
         XCTAssertTrue(devices.contains { $0.hasPrefix("virtio-net-pci,netdev=net0,mac=52:54:00:") })
-        XCTAssertTrue(devices.contains("virtserialport,bus=vserial.0,chardev=vdagent,name=com.redhat.spice.0"))
+        // Isolation: kein Agentenkanal, keine Ordnerfreigabe
+        XCTAssertFalse(devices.contains { $0.hasPrefix("virtio-serial") || $0.hasPrefix("virtserialport") || $0.hasPrefix("virtio-9p") })
+        XCTAssertFalse(args.contains("-fsdev"))
+        XCTAssertFalse(values(after: "-chardev", in: args).contains { $0.contains("vdagent") })
 
         let drives = values(after: "-drive", in: args)
         XCTAssertTrue(drives.contains("if=pflash,format=raw,unit=0,file=/opt/homebrew/share/qemu/edk2-aarch64-code.fd,readonly=on"))
         XCTAssertTrue(drives.contains { $0.hasPrefix("if=pflash,format=raw,unit=1,file=") && $0.hasSuffix("qemu-efi-vars.fd") })
         XCTAssertTrue(drives.contains { $0.contains("id=system,format=qcow2") && $0.contains("disk.qcow2") })
 
-        XCTAssertEqual(values(after: "-netdev", in: args), ["user,id=net0,hostfwd=tcp:127.0.0.1:33389-:3389"])
+        XCTAssertEqual(values(after: "-netdev", in: args), ["user,id=net0"])
         XCTAssertEqual(values(after: "-qmp", in: args), ["unix:/tmp/pluralism-501/\(config.shortID)/qmp.sock,server=on,wait=off"])
         XCTAssertEqual(values(after: "-display", in: args), ["none"])
         XCTAssertEqual(values(after: "-vnc", in: args), ["unix:/tmp/pluralism-501/\(config.shortID)/vnc.sock"])
@@ -166,17 +169,23 @@ final class QEMUTests: XCTestCase {
         ])
     }
 
-    func testLinuxPlanUsesVirtioBlockAnd9p() throws {
+    func testRemoteDesktopForward() throws {
+        var config = windowsConfig()
+        config.windows.rdpHostPort = 33389
+        config.network.portForwards = [PortForward(hostPort: 2222, guestPort: 22)]
+        let plan = try makePlan(config)
+        XCTAssertEqual(values(after: "-netdev", in: plan.qemu.arguments),
+                       ["user,id=net0,hostfwd=tcp:127.0.0.1:2222-:22,hostfwd=tcp:127.0.0.1:33389-:3389"])
+    }
+
+    func testLinuxPlanUsesVirtioBlock() throws {
         var config = VMConfiguration.makeDefault(name: "Debian", guestOS: .linux, host: host)
         config.engine = .qemu
         config.disk = DiskSettings(sizeGiB: 64, format: .qcow2)
-        config.sharedFolders = [SharedFolder(name: "Projekte", hostPath: "/Users/musti/Projekte", readOnly: true)]
         let plan = try makePlan(config)
         let devices = values(after: "-device", in: plan.qemu.arguments)
         XCTAssertTrue(devices.contains("virtio-blk-pci,drive=system,bootindex=1"))
-        XCTAssertTrue(devices.contains("virtio-9p-pci,fsdev=fs0,mount_tag=Projekte"))
-        XCTAssertEqual(values(after: "-fsdev", in: plan.qemu.arguments),
-                       ["local,id=fs0,path=/Users/musti/Projekte,security_model=mapped-xattr,readonly=on"])
+        XCTAssertFalse(plan.qemu.arguments.contains("-fsdev"))
         XCTAssertEqual(values(after: "-rtc", in: plan.qemu.arguments), ["base=utc"])
         XCTAssertTrue(values(after: "-netdev", in: plan.qemu.arguments).first?.contains("hostfwd") == false)
     }

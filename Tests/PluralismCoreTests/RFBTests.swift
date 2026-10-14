@@ -138,8 +138,6 @@ final class RFBTests: XCTestCase {
                        [4, 1, 0, 0, 0, 0, 0xFF, 0x0D])
         XCTAssertEqual(RFBClientProtocol.qemuExtendedKeyEvent(down: false, keysym: 0x61, scancode: 0x1E),
                        [255, 0, 0, 0, 0, 0, 0, 0x61, 0, 0, 0, 0x1E])
-        XCTAssertEqual(RFBClientProtocol.clientCutText("Ä€"),
-                       [6, 0, 0, 0, 0, 0, 0, 2, 0xC4, UInt8(ascii: "?")])
         XCTAssertEqual(RFBClientProtocol.pointerEvent(buttonMask: 0, x: -5, y: 70000), [5, 0, 0, 0, 0xFF, 0xFF])
     }
 

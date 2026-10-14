@@ -4,8 +4,11 @@ import Virtualization
 
 /// Übersetzt eine Pluralism-Konfiguration in eine `VZVirtualMachineConfiguration`
 /// für Linux-Gäste. Der Geräteaufbau folgt Apples Beispiel
-/// "Running GUI Linux in a virtual machine on a Mac", ergänzt um Freigaben,
-/// Zwischenablage, Ton, USB-Controller und verschachtelte Virtualisierung.
+/// "Running GUI Linux in a virtual machine on a Mac", ergänzt um Ton, USB-Controller und
+/// verschachtelte Virtualisierung.
+///
+/// Isolation: Es gibt bewusst keine Zwischenablage (SPICE-Agent-Port), keine geteilten Ordner
+/// (virtiofs) und keinen vsock-Kanal. Nach außen gehen nur Netzwerk und Peripherie.
 enum AppleConfigurationFactory {
     static func make(config: VMConfiguration, bundle: VMBundle) throws -> VZVirtualMachineConfiguration {
         let fm = FileManager.default
@@ -40,16 +43,16 @@ enum AppleConfigurationFactory {
         vz.pointingDevices = [VZUSBScreenCoordinatePointingDeviceConfiguration()]
 
         // Ton. Ton-Geräte verhindern das Sichern des Zustands, daher im Modus "suspendable" aus.
-        let integration = config.integration
-        if !config.advanced.suspendable && (integration.audioOutput || integration.audioInput) {
+        let peripherals = config.peripherals
+        if !config.advanced.suspendable && (peripherals.audioOutput || peripherals.audioInput) {
             let sound = VZVirtioSoundDeviceConfiguration()
             var streams: [VZVirtioSoundDeviceStreamConfiguration] = []
-            if integration.audioOutput {
+            if peripherals.audioOutput {
                 let output = VZVirtioSoundDeviceOutputStreamConfiguration()
                 output.sink = VZHostAudioOutputStreamSink()
                 streams.append(output)
             }
-            if integration.audioInput {
+            if peripherals.audioInput {
                 let input = VZVirtioSoundDeviceInputStreamConfiguration()
                 input.source = VZHostAudioInputStreamSource()
                 streams.append(input)
@@ -64,27 +67,6 @@ enum AppleConfigurationFactory {
         if config.advanced.memoryBalloon {
             vz.memoryBalloonDevices = [VZVirtioTraditionalMemoryBalloonDeviceConfiguration()]
         }
-        // vsock für einen späteren Pluralism-Gastagenten (Zeit, Herunterfahren, Coherence).
-        vz.socketDevices = [VZVirtioSocketDeviceConfiguration()]
-
-        // Geteilte Ordner über virtiofs. Alle Ordner liegen unter einer Freigabe "pluralism",
-        // im Gast: mount -t virtiofs pluralism /mnt/pluralism
-        if let share = makeDirectoryShare(config: config) {
-            vz.directorySharingDevices = [share]
-        }
-
-        // Zwischenablage über Apples SPICE-Agent-Port (im Gast: spice-vdagent)
-        if integration.clipboard {
-            let console = VZVirtioConsoleDeviceConfiguration()
-            let port = VZVirtioConsolePortConfiguration()
-            port.name = VZSpiceAgentPortAttachment.spiceAgentPortName
-            let spice = VZSpiceAgentPortAttachment()
-            spice.sharesClipboard = true
-            port.attachment = spice
-            console.ports[0] = port
-            vz.consoleDevices = [console]
-        }
-
         // Serielle Konsole in eine Logdatei (hilft bei Startproblemen)
         if config.advanced.serialLog && !config.advanced.suspendable {
             let serial = VZVirtioConsoleDeviceSerialPortConfiguration()
@@ -157,28 +139,9 @@ enum AppleConfigurationFactory {
             devices.append(VZUSBMassStorageDeviceConfiguration(attachment: attachment))
         }
 
-        if config.media.attachGuestTools, fm.fileExists(atPath: bundle.guestToolsISOURL.path) {
-            let attachment = try VZDiskImageStorageDeviceAttachment(url: bundle.guestToolsISOURL, readOnly: true)
-            devices.append(VZUSBMassStorageDeviceConfiguration(attachment: attachment))
-        }
         return devices
     }
 
-    private static func makeDirectoryShare(config: VMConfiguration) -> VZVirtioFileSystemDeviceConfiguration? {
-        var directories: [String: VZSharedDirectory] = [:]
-        for folder in config.sharedFolders {
-            var isDirectory: ObjCBool = false
-            guard FileManager.default.fileExists(atPath: folder.hostPath, isDirectory: &isDirectory), isDirectory.boolValue else {
-                continue
-            }
-            directories[folder.name] = VZSharedDirectory(url: URL(fileURLWithPath: folder.hostPath, isDirectory: true),
-                                                         readOnly: folder.readOnly)
-        }
-        guard !directories.isEmpty else { return nil }
-        let device = VZVirtioFileSystemDeviceConfiguration(tag: LinuxGuestTools.shareTag)
-        device.share = VZMultipleDirectoryShare(directories: directories)
-        return device
-    }
 
     private static func clampCPU(_ value: Int) -> Int {
         min(max(value, VZVirtualMachineConfiguration.minimumAllowedCPUCount),

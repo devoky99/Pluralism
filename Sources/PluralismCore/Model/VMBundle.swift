@@ -34,7 +34,6 @@ public struct VMBundle: Equatable, Hashable, Sendable {
     public var logsDirectory: URL { url.appendingPathComponent("logs", isDirectory: true) }
     public var snapshotsDirectory: URL { url.appendingPathComponent("snapshots", isDirectory: true) }
     public var unattendISOURL: URL { url.appendingPathComponent("unattend.iso") }
-    public var guestToolsISOURL: URL { url.appendingPathComponent("pluralism-tools.iso") }
 
     public var serialLogURL: URL { logsDirectory.appendingPathComponent("serial.log") }
     public var engineLogURL: URL { logsDirectory.appendingPathComponent("engine.log") }

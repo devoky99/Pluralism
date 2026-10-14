@@ -211,7 +211,7 @@ final class AppleVMEngine: NSObject, VMEngine, VZVirtualMachineDelegate {
 
     func makeDisplayView() -> NSView? {
         let view = VZVirtualMachineView()
-        view.capturesSystemKeys = config.integration.captureSystemKeys
+        view.capturesSystemKeys = config.peripherals.captureSystemKeys
         view.automaticallyReconfiguresDisplay = config.display.autoResize
         view.virtualMachine = virtualMachine
         displayView = view
@@ -223,8 +223,6 @@ final class AppleVMEngine: NSObject, VMEngine, VZVirtualMachineDelegate {
     // MARK: Extras
 
     func sendCtrlAltDelete() {}
-
-    func sendClipboardToGuest() {}
 
     var supportsHotPlug: Bool {
         if #available(macOS 15, *) {

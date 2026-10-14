@@ -31,7 +31,7 @@ struct VMSettingsView: View {
                 hardwareSection
                 displaySection
                 networkSection
-                integrationSection
+                peripheralSection
                 if draft.guestOS == .windows {
                     windowsSection
                 }
@@ -130,7 +130,6 @@ struct VMSettingsView: View {
                         Text(frontend.displayName).tag(frontend)
                     }
                 }
-                Hint(draft.guestOS == .windows ? "Zwischenablage für Windows vorerst über Remote Desktop (Windows App von Microsoft)." : "„Eigenes QEMU-Fenster“ unterstützt die Zwischenablage in beide Richtungen, im Pluralism-Fenster geht Text vom Mac zum Gast.")
             }
         }
     }
@@ -182,14 +181,14 @@ struct VMSettingsView: View {
         }
     }
 
-    private var integrationSection: some View {
-        Section("Integration") {
-            Toggle("Gemeinsame Zwischenablage", isOn: $draft.integration.clipboard)
-            Toggle("Ton ausgeben", isOn: $draft.integration.audioOutput)
+    private var peripheralSection: some View {
+        Section("Peripherie") {
+            Toggle("Ton ausgeben", isOn: $draft.peripherals.audioOutput)
             if draft.engine == .appleVirtualization {
-                Toggle("Mikrofon", isOn: $draft.integration.audioInput)
-                Toggle("Systemkürzel an den Gast (z. B. Cmd+Tab)", isOn: $draft.integration.captureSystemKeys)
+                Toggle("Mikrofon", isOn: $draft.peripherals.audioInput)
+                Toggle("Systemkürzel an den Gast (z. B. Cmd+Tab)", isOn: $draft.peripherals.captureSystemKeys)
             }
+            Hint("Die VM ist isoliert: keine Zwischenablage, keine geteilten Ordner, kein Kanal zum Mac.")
         }
     }
 

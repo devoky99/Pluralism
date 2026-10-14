@@ -189,9 +189,6 @@ final class QEMUEngine: VMEngine {
                 media.unattendISO = bundle.unattendISOURL.path
             }
         }
-        if config.media.attachGuestTools, fm.fileExists(atPath: bundle.guestToolsISOURL.path) {
-            media.toolsISO = bundle.guestToolsISOURL.path
-        }
         return media
     }
 
@@ -306,10 +303,6 @@ final class QEMUEngine: VMEngine {
 
     func sendCtrlAltDelete() {
         qmp?.send(.sendKeys(["ctrl", "alt", "delete"]))
-    }
-
-    func sendClipboardToGuest() {
-        displayView?.syncClipboardToGuest(force: true)
     }
 
     var supportsHotPlug: Bool { false }

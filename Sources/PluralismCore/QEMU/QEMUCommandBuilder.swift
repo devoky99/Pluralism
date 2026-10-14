@@ -23,13 +23,11 @@ public struct QEMUMedia: Equatable, Sendable {
     public var installerISO: String?
     public var driverISO: String?
     public var unattendISO: String?
-    public var toolsISO: String?
 
-    public init(installerISO: String? = nil, driverISO: String? = nil, unattendISO: String? = nil, toolsISO: String? = nil) {
+    public init(installerISO: String? = nil, driverISO: String? = nil, unattendISO: String? = nil) {
         self.installerISO = installerISO
         self.driverISO = driverISO
         self.unattendISO = unattendISO
-        self.toolsISO = toolsISO
     }
 }
 
@@ -52,6 +50,8 @@ public struct QEMULaunchPlan: Equatable, Sendable {
 /// - USB-Tastatur und USB-Tablet (absolute Mauskoordinaten)
 /// - virtio-net (Treiber NetKVM kommt per Antwortdatei aus dem virtio-win-ISO)
 /// - QMP-Socket zur Steuerung, VNC-Socket für die Anzeige im Pluralism-Fenster
+/// - Isolation: kein Agentenkanal (virtio-serial/vdagent), keine Ordnerfreigabe (9p),
+///   nur Netzwerk und Peripherie
 public enum QEMUCommandBuilder {
     public static func makePlan(config: VMConfiguration,
                                 bundle: VMBundle,
@@ -141,9 +141,6 @@ public enum QEMUCommandBuilder {
         if let unattend = media.unattendISO {
             addCD(id: "unattend", path: unattend, bootIndex: nil)
         }
-        if let tools = media.toolsISO {
-            addCD(id: "tools", path: tools, bootIndex: nil)
-        }
 
         // Netzwerk (QEMU-Usermode-Netz: kein Root, keine Sonderrechte)
         if config.network.mode == .nat {
@@ -155,15 +152,8 @@ public enum QEMUCommandBuilder {
             args += ["-device", "virtio-net-pci,netdev=net0,mac=\(config.network.macAddress)"]
         }
 
-        // Zwischenablage über den SPICE-Agent-Kanal (im Gast: spice-vdagent)
-        if config.integration.clipboard {
-            args += ["-device", "virtio-serial-pci,id=vserial"]
-            args += ["-chardev", "qemu-vdagent,id=vdagent,name=vdagent,clipboard=on"]
-            args += ["-device", "virtserialport,bus=vserial.0,chardev=vdagent,name=com.redhat.spice.0"]
-        }
-
         // Ton (QEMUs CoreAudio-Ausgabe; ein Mikrofon unterstützt sie nicht)
-        if config.integration.audioOutput && !config.advanced.suspendable {
+        if config.peripherals.audioOutput && !config.advanced.suspendable {
             args += ["-audiodev", "coreaudio,id=audio0"]
             args += ["-device", "intel-hda"]
             args += ["-device", "hda-output,audiodev=audio0"]
@@ -177,18 +167,6 @@ public enum QEMUCommandBuilder {
         }
 
         args += ["-rtc", isWindows ? "base=localtime" : "base=utc"]
-
-        // Geteilte Ordner für Linux über virtio-9p (virtiofs gibt es mit QEMU auf macOS nicht)
-        if !isWindows {
-            for (index, folder) in config.sharedFolders.enumerated() {
-                var fsdev = "local,id=fs\(index),path=\(escape(folder.hostPath)),security_model=mapped-xattr"
-                if folder.readOnly {
-                    fsdev += ",readonly=on"
-                }
-                args += ["-fsdev", fsdev]
-                args += ["-device", "virtio-9p-pci,fsdev=fs\(index),mount_tag=\(folder.name)"]
-            }
-        }
 
         // TPM
         var swtpmPlan: ProcessPlan?

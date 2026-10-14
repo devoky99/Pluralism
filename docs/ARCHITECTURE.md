@@ -2,14 +2,30 @@
 
 Stand: Version 0.1 (Oktober 2026). Grundlage ist die Recherche in [research/](research/).
 
-## Grundentscheidung: zwei Engines
+## Grundprinzip: Isolation
+
+Jede VM ist vom Mac abgeschottet. Pluralism richtet bewusst **keine** Verbindung zwischen Mac und Gast ein,
+außer Netzwerk und Peripherie.
+
+| Bereich | In Pluralism | Bewusst weggelassen |
+|---|---|---|
+| Netzwerk | NAT (Apple) bzw. Usermode-Netz (QEMU), optionale Portweiterleitungen auf 127.0.0.1 | Bridged-Netz |
+| Peripherie | Bildschirm, Tastatur, Maus/Trackpad, Ton, optional Mikrofon, Installations-ISOs als USB-Laufwerk | |
+| Kanäle Mac ↔ Gast | keine | Zwischenablage (SPICE-Agent, vdagent, VNC-Zwischenablage), geteilte Ordner (virtiofs, 9p), vsock, virtio-serial, Gastagenten, Drag-and-drop |
+| Remote Desktop (optional, Windows) | Weiterleitung von 3389 auf 127.0.0.1, Verbindungsdatei ohne Umleitungen | Zwischenablage, Laufwerke, Drucker, Kamera, USB über RDP |
+
+Die Tests prüfen das: Die QEMU-Kommandozeile enthält weder virtio-serial noch vdagent noch 9p, die
+Windows-Antwortdatei installiert keine Agenten, und ältere Konfigurationen mit Freigaben werden beim
+Einlesen ignoriert.
+
+## Zwei Engines
 
 Apple stellt auf Apple Silicon zwei Wege zur Virtualisierung bereit:
 
 | | Virtualization.framework (VZ) | Hypervisor.framework (HVF) |
 |---|---|---|
 | Ebene | Fertiger VM-Baukasten mit Geräten (virtio) | Rohe CPU-Virtualisierung: vCPU-Threads, Speicher, Interrupt-Controller |
-| Geräte | Von Apple: virtio-blk, virtio-net, virtio-gpu (2D), virtiofs, Ton, SPICE-Zwischenablage, USB-Speicher | Muss die App selbst emulieren |
+| Geräte | Von Apple: virtio-blk, virtio-net, virtio-gpu (2D), Ton, USB-Speicher | Muss die App selbst emulieren |
 | Linux | Sehr gut, offiziell | Möglich, viel Eigenarbeit |
 | Windows 11 ARM | Nur mit privaten APIs, kein TPM, kein Secure Boot vor macOS 27, feste Auflösung | Geht, so machen es Parallels und VMware mit eigenen VMMs |
 
@@ -18,8 +34,7 @@ Pluralism nutzt deshalb:
 - **Linux ARM64 → Virtualization.framework** (`AppleVMEngine`)
 - **Windows 11 ARM64 → QEMU mit `-accel hvf`** als eigener Prozess (`QEMUEngine`)
 
-Parallels geht für Windows denselben Weg wie QEMU, nur mit einem eigenen, stark optimierten VMM statt QEMU.
-Ein eigener VMM ist das Langzeitziel (siehe [ROADMAP.md](ROADMAP.md)).
+Ein eigener VMM direkt auf Hypervisor.framework (wie bei Parallels) ist das Langzeitziel, siehe [ROADMAP.md](ROADMAP.md).
 
 ```mermaid
 flowchart LR
@@ -30,40 +45,43 @@ flowchart LR
     VZ --> LinuxGast[Linux ARM64]
     QEMU -->|Prozess| Q[qemu-system-aarch64<br/>-accel hvf]
     QEMU -->|Prozess| T[swtpm]
-    QEMU <-->|QMP, Unix-Socket| Q
-    QEMU <-->|VNC/RFB, Unix-Socket| Q
+    QEMU <-->|QMP: Start, Stopp, Pause| Q
+    QEMU <-->|VNC: Bild, Tastatur, Maus| Q
     Q --> HVF[Hypervisor.framework]
     HVF --> WinGast[Windows 11 ARM64]
 ```
+
+QMP und VNC laufen über Unix-Sockets zwischen Pluralism und dem QEMU-Prozess auf dem Mac. Sie steuern die
+virtuelle Hardware und transportieren Bild und Eingaben, haben aber keinen Zugang zum Dateisystem oder zur
+Zwischenablage des Gasts.
 
 ## Module
 
 ### PluralismCore (plattformneutral, getestet)
 
-Nur Foundation, kompiliert auch unter Linux. Enthält alles, was sich ohne Apple-UI testen lässt.
+Nur Foundation, kompiliert auch unter Linux.
 
 | Datei | Aufgabe |
 |---|---|
-| `Model/VMConfiguration.swift` | Komplette VM-Konfiguration, tolerant gegenüber alten `config.json`-Dateien, Validierung mit verständlichen Meldungen |
+| `Model/VMConfiguration.swift` | VM-Konfiguration, tolerant gegenüber alten `config.json`-Dateien, Validierung mit verständlichen Meldungen |
 | `Model/VMBundle.swift` | Aufbau eines VM-Ordners, kurze Socket-Pfade (`RuntimePaths`), Snapshot-Metadaten |
 | `Host/HostProfile.swift` | Beschreibung des Macs und `ResourceAdvisor` mit Empfehlungen (P-Kerne, Speicherreserve für macOS) |
 | `QEMU/QEMUCommandBuilder.swift` | Erzeugt die QEMU- und swtpm-Kommandozeilen |
 | `QEMU/QEMUToolchain.swift` | Werkzeuge, Firmware, Geräteerkennung (`-device help`) |
 | `QEMU/QMPProtocol.swift` | QMP-Befehle und -Nachrichten |
-| `RFB/RFBProtocol.swift` | VNC-Client-Protokoll (RFB 3.8, Raw, CopyRect, DesktopSize, QEMU-Tastenerweiterung) |
+| `RFB/RFBProtocol.swift` | VNC-Client (RFB 3.8, Raw, CopyRect, DesktopSize, QEMU-Tastenerweiterung), ohne Zwischenablage |
 | `RFB/KeyboardMapping.swift` | Mac-Keycodes zu PC-Scancodes, inklusive ISO-Tausch für deutsche Tastaturen |
 | `Windows/UnattendBuilder.swift` | `autounattend.xml` und `pluralism-setup.cmd` für die automatische Windows-Installation |
-| `Linux/LinuxGuestTools.swift` | Installationsskript der Pluralism Tools für Linux |
 
 ### Pluralism (macOS-App)
 
 | Bereich | Dateien | Aufgabe |
 |---|---|---|
 | App | `PluralismApp`, `AppModel`, `VMSession` | Fenster, Bibliothek, eine Sitzung pro VM, Beenden ohne verwaiste Prozesse |
-| Apple-Engine | `AppleVMEngine`, `AppleConfigurationFactory` | VZ-Konfiguration, Start, Pause, Zustand sichern, ISO im Betrieb anhängen |
+| Apple-Engine | `AppleVMEngine`, `AppleConfigurationFactory` | VZ-Konfiguration, Start, Pause, Zustand sichern, ISO im Betrieb einlegen |
 | QEMU-Engine | `QEMUEngine`, `ManagedProcess`, `QMPClient`, `RFBConnection`, `RFBDisplayView`, `UnixSocket` | Prozesse, Steuerung, Bild und Eingaben |
-| Werkzeuge | `HostInspector`, `ToolchainDetector` | sysctl-Daten, Suche nach QEMU/swtpm/Firmware |
-| Medien | `DiskImageService`, `GuestMediaBuilder`, `DownloadService` | Platten (RAW, ASIF, qcow2), ISOs per `hdiutil`, Downloads |
+| Werkzeuge | `HostInspector`, `ToolchainDetector` | sysctl-Daten, Suche nach QEMU, swtpm und Firmware |
+| Medien | `DiskImageService`, `GuestMediaBuilder`, `DownloadService` | Platten (RAW, ASIF, qcow2), Setup-ISO per `hdiutil`, virtio-win-Download |
 | Snapshots | `SnapshotService` | APFS-Klone von Platte, UEFI, TPM, Konfiguration |
 | Oberfläche | `UI/*` | Liste, Details, Assistent, Einstellungen, VM-Fenster, App-Einstellungen |
 
@@ -79,26 +97,25 @@ Nur Foundation, kompiliert auch unter Linux. Enthält alles, was sich ohne Apple
 ├── saved-state.vzvmsave      gesicherter Zustand nach "Anhalten" (Apple-Engine)
 ├── tpm/                      Zustand des emulierten TPM
 ├── unattend.iso              Antwortdatei, Einrichtungsskript, ARM64-Treiber (Windows)
-├── pluralism-tools.iso       Pluralism Tools (Linux)
 ├── logs/                     engine.log (QEMU), swtpm.log, serial.log
 └── snapshots/<UUID>/         APFS-Klone plus snapshot.json
 ```
 
-Unix-Sockets liegen unter `/tmp/pluralism-<uid>/<kurz-ID>/`, weil macOS Socket-Pfade auf 104 Bytes begrenzt.
+Unix-Sockets liegen unter `/tmp/pluralism-<uid>/<kurz-ID>/` (Rechte 0700), weil macOS Socket-Pfade auf
+104 Bytes begrenzt.
 
 ## Linux-Gast im Detail
 
-Geräte (Apples Beispiel „Running GUI Linux in a virtual machine on a Mac“ plus Integration):
-
 - `VZEFIBootLoader` mit eigenem Variablenspeicher, `VZGenericPlatformConfiguration` mit gespeicherter Kennung
-- Systemplatte als virtio-blk, ISO und Tools als USB-Massenspeicher
+- Systemplatte als virtio-blk, ISO als USB-Massenspeicher
 - `VZNATNetworkDeviceAttachment` (Netz 192.168.64.0/24, Gast vom Mac direkt erreichbar)
 - `VZVirtioGraphicsDeviceConfiguration` mit `automaticallyReconfiguresDisplay`
-- virtiofs mit Tag `pluralism`, alle freigegebenen Ordner als Unterordner (`VZMultipleDirectoryShare`)
-- SPICE-Agent-Port für die Zwischenablage (`spice-vdagent` im Gast)
-- virtio-sound, Entropie, Speicher-Ballon, vsock (für einen späteren Gastagenten)
-- XHCI-Controller (macOS 15) für Medien im laufenden Betrieb
+- USB-Tastatur, USB-Zeigegerät mit absoluten Koordinaten
+- virtio-sound (Ausgabe, optional Mikrofon), Entropie, Speicher-Ballon
+- XHCI-Controller (macOS 15) für ISOs im laufenden Betrieb
 - verschachtelte Virtualisierung (M3 oder neuer, macOS 15): auf dem M4 Pro verfügbar
+- serielle Konsole optional in `logs/serial.log`
+- nicht vorhanden: SPICE-Agent-Port, virtiofs, vsock
 
 ## Windows-Gast im Detail
 
@@ -114,8 +131,7 @@ qemu-system-aarch64 -nodefaults -machine virt,gic-version=3 -accel hvf -cpu host
   -device usb-storage,drive=installer,bootindex=0   (Windows-ISO)
   -device usb-storage,drive=drivers                 (virtio-win)
   -device usb-storage,drive=unattend                (Antwortdatei)
-  -netdev user,id=net0,hostfwd=tcp:127.0.0.1:33389-:3389 -device virtio-net-pci,netdev=net0
-  -chardev qemu-vdagent,clipboard=on + virtserialport com.redhat.spice.0
+  -netdev user,id=net0 -device virtio-net-pci,netdev=net0
   -audiodev coreaudio -device intel-hda -device hda-output
   -qmp unix:qmp.sock -display none -vnc unix:vnc.sock
 ```
@@ -126,12 +142,14 @@ Warum so:
 - **ramfb** ist ein einfacher Framebuffer, den Windows ohne Treiber anzeigt (feste Auflösung).
   Nach Installation des Treibers `viogpudo` kann man auf virtio-gpu umstellen.
 - **virtio-net** braucht den Treiber NetKVM. Pluralism kopiert ihn beim Anlegen aus dem virtio-win-ISO
-  in das Antwort-Medium, das Einrichtungsskript installiert ihn nach der ersten Anmeldung per `pnputil`.
+  in das Setup-Medium, das Einrichtungsskript installiert ihn nach der ersten Anmeldung per `pnputil`.
+  Übernommen werden nur Treiber für Netzwerk, Speicher und Peripherie
+  (NetKVM, viostor, vioscsi, Balloon, viorng, vioinput, viogpudo), keine Kanal-Treiber wie vioserial oder viofs.
 - **TPM:** Das normale QEMU bietet unter ARM nur `tpm-tis-device`, das Windows ARM auf Apple Silicon laut
   Berichten nicht zuverlässig nutzt („Code 10“). Mit dem Gerät `tpm-crb-device` (ein Patch für QEMU) klappt es.
   Pluralism erkennt, welches Gerät vorhanden ist. Standard ist „kein TPM“ plus Umgehung der Prüfung.
-- **Usermode-Netz** (slirp) braucht weder Root noch Sonderrechte. Der Mac erreicht Windows über
-  Portweiterleitungen, Windows erreicht den Mac unter 10.0.2.2.
+- **Usermode-Netz** (slirp) braucht weder Root noch Sonderrechte. Der Mac erreicht Windows nur über
+  ausdrücklich eingerichtete Portweiterleitungen auf 127.0.0.1.
 
 ### Anzeige und Eingabe
 
@@ -140,11 +158,10 @@ eigenen Puffer (32 Bit, BGRX), `RFBDisplayView` zeigt es seitenverhältnistreu a
 
 - Tastatur über die QEMU-Erweiterung „Extended Key Event“: Pluralism schickt PC-Scancodes, das
   Tastaturlayout im Gast entscheidet über das Zeichen. ISO-Tastaturen (deutsch) werden erkannt.
-- Mac-Kürzel: Cmd+Buchstabe wird zu Strg+Buchstabe, Cmd allein ist die Windows-Taste,
-  Cmd+Q/W/H/M/Tab bleiben beim Mac.
+- Mac-Kürzel: Cmd+Buchstabe wird im Gast zu Strg+Buchstabe, Cmd allein ist die Windows-Taste,
+  Cmd+Q/W/H/M/Tab bleiben beim Mac. Dabei wird nur die Tastatur übersetzt, Inhalte wandern nicht zwischen Mac und Gast.
 - Maus als absolute Koordinaten (USB-Tablet), Scrollen mit Trackpad-Glättung.
-- Zwischenablage: vorbereitet über den SPICE-Agent-Kanal (virtio-serial). Für Windows ARM gibt es dafür noch
-  keinen eigenen Agenten, bis dahin läuft die Zwischenablage über Remote Desktop.
+- Zwischenablage-Nachrichten des VNC-Servers werden verworfen, der Client sendet keine.
 
 ### Automatische Installation
 
@@ -154,20 +171,20 @@ eigenen Puffer (32 Bit, BGRX), `RFBDisplayView` zeigt es seitenverhältnistreu a
 2. Platte 0 wird partitioniert (EFI 300 MB, MSR 16 MB, Rest NTFS)
 3. Edition per Schlüssel (Standard: öffentlicher KMS-Client-Schlüssel für Pro, aktiviert nicht)
 4. Lokales Konto, Online-Konto-Seiten ausgeblendet, `BypassNRO` gesetzt, einmal automatisch anmelden
-5. Erste Anmeldung: `pluralism-setup.cmd` sucht sein Medium auf D: bis Z:, installiert Treiber
-   (`pnputil`) und die virtio-win-Gasttools, schaltet Remote Desktop und Firewall-Regel frei,
-   deaktiviert den Ruhezustand
+5. Erste Anmeldung: `pluralism-setup.cmd` sucht sein Medium auf D: bis Z:, installiert die Treiber per
+   `pnputil`, schaltet Remote Desktop nur ein, wenn die Weiterleitung konfiguriert ist, und deaktiviert
+   den Ruhezustand
 
 Die Sprache des ISOs liest Pluralism aus `sources/lang.ini`, damit die Antwortdatei dazu passt.
-Das Passwort steht nur im Antwort-ISO, nicht in `config.json`.
+Das Passwort steht nur im Setup-ISO, nicht in `config.json`.
 
 ## Signatur und Rechte
 
 `scripts/build-app.sh` signiert ad hoc (`codesign -s -`) mit:
 
-- `com.apple.security.virtualization` (VZ, funktioniert ad hoc, wie bei Lima und Code-Hex/vz)
+- `com.apple.security.virtualization` (VZ, funktioniert ad hoc)
 - `com.apple.security.hypervisor` (für den späteren eigenen VMM; QEMU aus Homebrew ist selbst signiert)
-- `com.apple.security.device.audio-input` (Mikrofon)
+- `com.apple.security.device.audio-input` (Mikrofon, nur wenn in der VM eingeschaltet)
 
 Nicht möglich ohne Apples Freigabe: `com.apple.vm.networking` (Bridged-Netz) und
 `com.apple.vm.device-access` (USB-Zugriff aus QEMU). Die App läuft ohne Sandbox.
@@ -175,6 +192,6 @@ Nicht möglich ohne Apples Freigabe: `com.apple.vm.networking` (Bridged-Netz) un
 ## Tests
 
 `swift test` prüft den Kern: Konfiguration und Validierung, Empfehlungen für den M4 Pro, QEMU-Argumente
-(inklusive TPM, Secure Boot, Escaping), QMP, das RFB-Protokoll mit einem simulierten Server,
+(inklusive Isolation, TPM, Secure Boot, Escaping), QMP, das RFB-Protokoll mit einem simulierten Server,
 Framebuffer-Operationen, Tastaturtabellen und die Windows-Antwortdatei. GitHub Actions baut bei jedem Push
 den Kern unter Linux und die komplette App auf einem Apple-Silicon-Runner.

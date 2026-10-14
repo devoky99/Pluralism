@@ -270,13 +270,12 @@ struct NewVMWizard: View {
                 if os == .windows {
                     LabeledContent("Treiber", value: virtioPath.isEmpty ? "keine (kein Netzwerk!)" : (virtioPath as NSString).lastPathComponent)
                     LabeledContent("Automatische Installation", value: unattend.enabled ? "ja, Benutzer \(unattend.userName)" : "nein")
-                    LabeledContent("Remote Desktop", value: "localhost:\(String(suggestedRDPPort()))")
                 }
             }
             Section {
                 Hint(os == .windows
                      ? "Nach dem Anlegen startet die Installation mit „Starten“. Windows richtet sich selbst ein und startet dabei mehrmals neu. Das dauert etwa 15 bis 30 Minuten."
-                     : "Nach dem Anlegen startet die VM vom ISO. Nach der Installation das Medium auswerfen und die Pluralism Tools einlegen.")
+                     : "Nach dem Anlegen startet die VM vom ISO. Nach der Installation das Medium auswerfen.")
             }
         }
         .formStyle(.grouped)
@@ -327,12 +326,6 @@ struct NewVMWizard: View {
         step += 1
     }
 
-    private func suggestedRDPPort() -> Int {
-        let used = Set(model.configurations.compactMap { $0.windows.rdpHostPort })
-        var port = 33389
-        while used.contains(port) { port += 1 }
-        return port
-    }
 
     private func create() {
         errorText = nil
@@ -347,7 +340,6 @@ struct NewVMWizard: View {
         if os == .windows {
             config.media.driverISOPath = virtioPath.isEmpty ? nil : virtioPath
             config.windows.unattend = unattend
-            config.windows.rdpHostPort = suggestedRDPPort()
         }
 
         let issues = config.validationIssues(host: model.host)

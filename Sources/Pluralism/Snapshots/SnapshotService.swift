@@ -41,7 +41,7 @@ enum SnapshotService {
     }
 
     /// Stellt einen Snapshot wieder her und liefert die dabei geladene Konfiguration.
-    /// Name, Notizen und geteilte Ordner bleiben auf dem aktuellen Stand.
+    /// Name und Notizen bleiben auf dem aktuellen Stand.
     static func restore(bundle: VMBundle, current: VMConfiguration, snapshot: SnapshotInfo) throws -> VMConfiguration {
         let fm = FileManager.default
         let dir = directory(for: snapshot.id, bundle: bundle)
@@ -63,7 +63,6 @@ enum SnapshotService {
         var restored = (try? bundle.loadConfiguration()) ?? current
         restored.name = current.name
         restored.notes = current.notes
-        restored.sharedFolders = current.sharedFolders
         try bundle.save(restored)
         return restored
     }

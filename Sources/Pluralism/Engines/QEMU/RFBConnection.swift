@@ -21,7 +21,7 @@ private final class SocketByteStream: RFBByteSource, RFBByteSink {
 }
 
 /// Verbindung zum VNC-Server einer QEMU-VM. Hält das Bild der VM im Speicher und
-/// schickt Tastatur, Maus und Zwischenablage an den Gast.
+/// schickt Tastatur und Maus an den Gast. Eine Zwischenablage gibt es bewusst nicht.
 final class RFBConnection {
     private var stream: SocketByteStream?
     private var client: RFBClientProtocol?
@@ -37,8 +37,6 @@ final class RFBConnection {
     var onUpdate: (() -> Void)?
     /// Gast-Auflösung geändert (Hauptthread).
     var onResize: ((Int, Int) -> Void)?
-    /// Gast hat Text in die Zwischenablage gelegt (Hauptthread).
-    var onClipboard: ((String) -> Void)?
     /// Verbindung beendet (Hauptthread).
     var onDisconnect: ((Error?) -> Void)?
 
@@ -101,12 +99,6 @@ final class RFBConnection {
         }
     }
 
-    func sendClipboard(_ text: String) {
-        sendQueue.async { [weak self] in
-            try? self?.client?.sendClipboard(text)
-        }
-    }
-
     func close() {
         running = false
         stream?.socket.close()
@@ -153,10 +145,9 @@ final class RFBConnection {
                     }
                     scheduleUpdate()
                     try client.requestUpdate(incremental: !resized, width: w, height: h)
-                case .serverCutText(let text):
-                    if !text.isEmpty {
-                        DispatchQueue.main.async { [weak self] in self?.onClipboard?(text) }
-                    }
+                case .serverCutText:
+                    // Isolation: Zwischenablage-Inhalte des Gasts werden verworfen.
+                    break
                 case .bell:
                     DispatchQueue.main.async { NSSound.beep() }
                 case .colorMapEntries:

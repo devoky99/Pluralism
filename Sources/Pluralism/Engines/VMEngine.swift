@@ -73,8 +73,6 @@ protocol VMEngine: AnyObject {
 
     /// Strg+Alt+Entf an den Gast schicken (nur QEMU).
     func sendCtrlAltDelete()
-    /// Text der Mac-Zwischenablage an den Gast geben (nur QEMU, integrierte Anzeige).
-    func sendClipboardToGuest()
     /// Ein Abbild (ISO) während des Betriebs als USB-Speicher anhängen (Apple-Engine, macOS 15).
     func hotPlugImage(_ url: URL, completion: @escaping (Error?) -> Void)
     var supportsHotPlug: Bool { get }

@@ -18,10 +18,8 @@ final class RFBDisplayView: NSView {
     private var commandUsedWithOtherKey = false
     private var pressedScancodes: [UInt32: UInt32] = [:]   // Scancode -> Keysym
     private var trackingArea: NSTrackingArea?
-    private var lastClipboardSent: String?
     private var scrollAccumulatorY: CGFloat = 0
     private var scrollAccumulatorX: CGFloat = 0
-    private var keyWindowObserver: NSObjectProtocol?
     /// Letztes Bild der VM. AppKit setzt es in updateLayer() als Inhalt der Ebene.
     private var currentImage: CGImage?
 
@@ -39,24 +37,12 @@ final class RFBDisplayView: NSView {
         fatalError("init(coder:) wird nicht unterstützt")
     }
 
-    deinit {
-        if let keyWindowObserver {
-            NotificationCenter.default.removeObserver(keyWindowObserver)
-        }
-    }
-
     // MARK: Verbindung
 
     func attach(_ connection: RFBConnection) {
         self.connection = connection
         connection.onUpdate = { [weak self] in self?.refresh() }
         connection.onResize = { [weak self] _, _ in self?.refresh() }
-        connection.onClipboard = { [weak self] text in
-            self?.lastClipboardSent = text
-            let pasteboard = NSPasteboard.general
-            pasteboard.clearContents()
-            pasteboard.setString(text, forType: .string)
-        }
         refresh()
     }
 
@@ -95,15 +81,7 @@ final class RFBDisplayView: NSView {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        if let keyWindowObserver {
-            NotificationCenter.default.removeObserver(keyWindowObserver)
-            self.keyWindowObserver = nil
-        }
-        guard let window else { return }
-        keyWindowObserver = NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification,
-                                                                   object: window, queue: .main) { [weak self] _ in
-            self?.syncClipboardToGuest()
-        }
+        guard window != nil else { return }
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.window?.makeFirstResponder(self)
@@ -111,22 +89,12 @@ final class RFBDisplayView: NSView {
     }
 
     override func becomeFirstResponder() -> Bool {
-        syncClipboardToGuest()
-        return true
+        true
     }
 
     override func resignFirstResponder() -> Bool {
         releaseAllKeys()
         return true
-    }
-
-    /// Mac-Zwischenablage an den Gast geben, wenn sie sich geändert hat.
-    func syncClipboardToGuest(force: Bool = false) {
-        guard let connection, let text = NSPasteboard.general.string(forType: .string) else { return }
-        if force || text != lastClipboardSent {
-            lastClipboardSent = text
-            connection.sendClipboard(text)
-        }
     }
 
     override func updateTrackingAreas() {

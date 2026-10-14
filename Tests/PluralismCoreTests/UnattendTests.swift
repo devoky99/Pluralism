@@ -71,7 +71,7 @@ final class UnattendTests: XCTestCase {
         let script = UnattendBuilder.makeSetupScript(makeInput())
         XCTAssertTrue(script.hasPrefix("@echo off\r\n"))
         XCTAssertTrue(script.contains("pnputil /add-driver \"%PLURALISMSRC%\\pluralism-drivers\\*.inf\" /subdirs /install"))
-        XCTAssertTrue(script.contains("virtio-win-guest-tools.exe"))
+        XCTAssertFalse(script.contains("guest-tools"))
         XCTAssertTrue(script.contains("fDenyTSConnections"))
         XCTAssertTrue(script.contains("@FirewallAPI.dll,-28752"))
         XCTAssertFalse(script.contains("\n\n"))
@@ -108,14 +108,9 @@ final class UnattendTests: XCTestCase {
         XCTAssertEqual(UnattendBuilder.virtioDriverPath("NetKVM"), "NetKVM/w11/ARM64")
         XCTAssertTrue(UnattendBuilder.virtioDriverFolders.contains("NetKVM"))
         XCTAssertTrue(UnattendBuilder.virtioDriverFolders.contains("viogpudo"))
+        // Isolation: kein Treiber für Kanäle zwischen Mac und Gast
+        XCTAssertFalse(UnattendBuilder.virtioDriverFolders.contains("vioserial"))
+        XCTAssertFalse(UnattendBuilder.virtioDriverFolders.contains("viofs"))
     }
 
-    func testLinuxGuestScript() {
-        let script = LinuxGuestTools.installScript
-        XCTAssertTrue(script.hasPrefix("#!/bin/sh"))
-        XCTAssertTrue(script.contains("spice-vdagent"))
-        XCTAssertTrue(script.contains("pluralism /mnt/pluralism virtiofs"))
-        XCTAssertTrue(script.contains("dnf install"))
-        XCTAssertTrue(script.contains("apt-get install"))
-    }
 }

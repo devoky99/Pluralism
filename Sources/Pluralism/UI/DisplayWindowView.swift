@@ -109,12 +109,6 @@ struct DisplayContent: View {
                     Label("Strg+Alt+Entf", systemImage: "keyboard")
                 }
                 .help("Strg+Alt+Entf an den Gast senden")
-                if session.configuration.display.qemuFrontend == .integrated && session.configuration.guestOS == .linux {
-                    Button { session.engine.sendClipboardToGuest() } label: {
-                        Label("Zwischenablage senden", systemImage: "doc.on.clipboard")
-                    }
-                    .help("Text aus der Mac-Zwischenablage an den Gast geben")
-                }
             }
             if session.state.isActive {
                 Button { session.shutdown() } label: { Label("Herunterfahren", systemImage: "power") }

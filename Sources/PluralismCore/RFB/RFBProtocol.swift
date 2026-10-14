@@ -279,10 +279,6 @@ public final class RFBClientProtocol {
         try sink.write(RFBClientProtocol.pointerEvent(buttonMask: buttonMask, x: x, y: y))
     }
 
-    public func sendClipboard(_ text: String) throws {
-        try sink.write(RFBClientProtocol.clientCutText(text))
-    }
-
     public static func setPixelFormat(_ format: RFBPixelFormat) -> [UInt8] {
         var bytes: [UInt8] = [0, 0, 0, 0]
         bytes.append(contentsOf: format.encoded())
@@ -333,13 +329,7 @@ public final class RFBClientProtocol {
         return bytes
     }
 
-    public static func clientCutText(_ text: String) -> [UInt8] {
-        let text = RFBText.encodeLatin1(text)
-        var bytes: [UInt8] = [6, 0, 0, 0]
-        bytes.append(contentsOf: RFBBytes.u32(UInt32(text.count)))
-        bytes.append(contentsOf: text)
-        return bytes
-    }
+    // Bewusst keine ClientCutText-Nachricht: Pluralism teilt keine Zwischenablage mit dem Gast.
 
     // MARK: Lesen
 
@@ -391,7 +381,8 @@ public enum RFBBytes {
     }
 }
 
-/// RFB überträgt Zwischenablage-Text klassisch als ISO 8859-1 (Latin-1).
+/// RFB überträgt Text klassisch als ISO 8859-1 (Latin-1). Pluralism liest solche Nachrichten
+/// nur, um den Datenstrom korrekt zu verarbeiten, und verwirft den Inhalt.
 public enum RFBText {
     public static func encodeLatin1(_ text: String) -> [UInt8] {
         text.unicodeScalars.map { $0.value <= 0xFF ? UInt8($0.value) : UInt8(ascii: "?") }

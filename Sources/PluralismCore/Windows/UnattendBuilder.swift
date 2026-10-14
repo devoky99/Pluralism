@@ -9,7 +9,7 @@ import Foundation
 /// - Edition per Schlüssel auswählen, Lizenz akzeptieren
 /// - Lokales Konto anlegen, Online-Konto-Seiten ausblenden, einmal automatisch anmelden
 /// - Bei der ersten Anmeldung `pluralism-setup.cmd` vom Antwort-Medium ausführen
-///   (Treiber per pnputil, Gasttools, Remote Desktop)
+///   (Treiber per pnputil, Remote Desktop nur wenn gewünscht)
 ///
 /// Laufwerksbuchstaben der CDs stehen vorher nicht fest. Deshalb sucht das Skript
 /// alle Buchstaben von D bis Z ab, statt feste Pfade zu verwenden.
@@ -33,9 +33,10 @@ public enum UnattendBuilder {
     public static let setupScriptName = "pluralism-setup.cmd"
     public static let driverFolderName = "pluralism-drivers"
 
-    /// Treiberordner im virtio-win-ISO, die Pluralism für ARM64 übernimmt.
-    public static let virtioDriverFolders = ["NetKVM", "viostor", "vioscsi", "vioserial", "Balloon",
-                                             "viorng", "vioinput", "viogpudo", "pvpanic", "viomem"]
+    /// Treiberordner im virtio-win-ISO, die Pluralism für ARM64 übernimmt. Nur Geräte für
+    /// Netzwerk, Speicher und Peripherie, keine Kanäle zwischen Mac und Gast.
+    public static let virtioDriverFolders = ["NetKVM", "viostor", "vioscsi", "Balloon",
+                                             "viorng", "vioinput", "viogpudo"]
 
     /// Relativer Pfad eines Treibers im virtio-win-ISO für Windows 11 ARM64.
     public static func virtioDriverPath(_ folder: String) -> String {
@@ -193,9 +194,6 @@ public enum UnattendBuilder {
         if input.settings.installGuestDrivers {
             lines.append("echo Treiber werden installiert ...")
             lines.append("if exist \"%PLURALISMSRC%\\\(driverFolderName)\" pnputil /add-driver \"%PLURALISMSRC%\\\(driverFolderName)\\*.inf\" /subdirs /install")
-            lines.append("for %%L in (D E F G H I J K L M N O P Q R S T U V W X Y Z) do (")
-            lines.append("  if exist \"%%L:\\virtio-win-guest-tools.exe\" start \"\" /wait \"%%L:\\virtio-win-guest-tools.exe\" /install /quiet /norestart")
-            lines.append(")")
         }
         if input.enableRemoteDesktop {
             lines.append("echo Remote Desktop wird eingeschaltet ...")

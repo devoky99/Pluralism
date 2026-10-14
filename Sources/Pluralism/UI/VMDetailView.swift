@@ -33,7 +33,7 @@ struct VMDetailView: View {
                 if config.guestOS == .windows {
                     windowsSection
                 }
-                sharedFoldersSection
+                isolationNote
                 snapshotsSection
                 if !config.notes.isEmpty {
                     GroupBox {
@@ -246,15 +246,13 @@ struct VMDetailView: View {
                         }
                         .disabled(isActive)
                     }
-                    if config.guestOS == .linux {
-                        Button(config.media.attachGuestTools ? "Pluralism Tools auswerfen" : "Pluralism Tools einlegen") {
-                            toggleGuestTools()
-                        }
-                        .disabled(busy)
+                    if isActive && session.engine.supportsHotPlug {
+                        Button("ISO im Betrieb einlegen …") { hotPlugISO() }
+                            .disabled(busy)
                     }
                 }
                 if config.guestOS == .linux {
-                    Hint("Pluralism Tools richten im Gast Zwischenablage und geteilte Ordner ein. Im Gast ausführen: sudo sh /run/media/$USER/PLURALISM_TOOLS/install.sh (bei Ubuntu unter /media/$USER/PLURALISM_TOOLS).")
+                    Hint("Nach der Installation das Medium auswerfen. Weitere ISOs lassen sich im laufenden Betrieb als USB-Laufwerk einlegen (macOS 15).")
                 } else {
                     Hint("Beim ersten Start installiert sich Windows automatisch (Antwortdatei mit Treibern). Danach das Installationsmedium auswerfen.")
                 }
@@ -266,49 +264,32 @@ struct VMDetailView: View {
         }
     }
 
-    private func toggleGuestTools() {
-        let attach = !config.media.attachGuestTools
-        let bundle = session.bundle
-        if attach && isActive {
-            // Im laufenden Betrieb anhängen (Apple-Engine ab macOS 15)
-            guard session.engine.supportsHotPlug else {
-                session.notice = "Die Pluralism Tools werden beim nächsten Start angehängt."
-                return
-            }
-            busy = true
-            DispatchQueue.global(qos: .userInitiated).async {
-                let result = Result { try GuestMediaBuilder.buildLinuxToolsMedia(bundle: bundle) }
-                DispatchQueue.main.async {
-                    if case .failure(let error) = result {
-                        busy = false
-                        model.show(error, title: "Pluralism Tools")
-                        return
-                    }
-                    session.engine.hotPlugImage(bundle.guestToolsISOURL) { error in
-                        busy = false
-                        if let error {
-                            model.show(error, title: "Anhängen fehlgeschlagen")
-                        } else {
-                            session.notice = "Pluralism Tools sind eingelegt (Laufwerk PLURALISM_TOOLS)."
-                        }
-                    }
-                }
-            }
-            return
-        }
-        guard !isActive else {
-            session.notice = "Auswerfen wirkt beim nächsten Start."
-            return
-        }
-        if attach && !FileManager.default.fileExists(atPath: bundle.guestToolsISOURL.path) {
-            do {
-                try GuestMediaBuilder.buildLinuxToolsMedia(bundle: bundle)
-            } catch {
-                model.show(error, title: "Pluralism Tools")
-                return
+    private func hotPlugISO() {
+        guard let url = FilePicker.chooseFile(title: "ISO in die laufende VM einlegen", extensions: ["iso", "img"]) else { return }
+        busy = true
+        session.engine.hotPlugImage(url) { error in
+            busy = false
+            if let error {
+                model.show(error, title: "Einlegen fehlgeschlagen")
+            } else {
+                session.notice = "„\(url.lastPathComponent)“ ist als USB-Laufwerk eingelegt."
             }
         }
-        update { $0.media.attachGuestTools = attach }
+    }
+
+    // MARK: Isolation
+
+    private var isolationNote: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Diese VM ist vom Mac abgeschottet: keine gemeinsame Zwischenablage, keine geteilten Ordner, kein Kanal zwischen Mac und Gast.")
+                Hint("Verbindungen nach außen nur über das Netzwerk und die Peripherie (Bildschirm, Tastatur, Maus, Ton).")
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(4)
+        } label: {
+            Label("Isolation", systemImage: "lock.shield")
+        }
     }
 
     // MARK: Windows
@@ -323,7 +304,7 @@ struct VMDetailView: View {
                         Button("RDP-Verbindung öffnen") { openRemoteDesktop(port: port) }
                             .disabled(session.state != .running)
                     }
-                    Hint("Mit der „Windows App“ von Microsoft (Mac App Store) bekommst du so dynamische Auflösung, Ton, Zwischenablage und Laufwerke. Remote Desktop braucht Windows 11 Pro. Eine eigene Zwischenablage für Windows (Pluralism Tools) steht auf der Roadmap.")
+                    Hint("Für die „Windows App“ von Microsoft. Die Verbindungsdatei schaltet Zwischenablage, Laufwerke und Geräte-Umleitung aus, die VM bleibt isoliert. Remote Desktop braucht Windows 11 Pro.")
                 }
                 HStack(spacing: 16) {
                     Text("TPM: \(config.windows.tpm.displayName)")
@@ -350,8 +331,17 @@ struct VMDetailView: View {
             "screen mode id:i:1",
             "dynamic resolution:i:1",
             "smart sizing:i:1",
-            "redirectclipboard:i:1",
-            "audiomode:i:0"
+            "audiomode:i:0",
+            // Isolation: nichts vom Mac in die VM umleiten
+            "redirectclipboard:i:0",
+            "redirectprinters:i:0",
+            "redirectsmartcards:i:0",
+            "redirectcomports:i:0",
+            "redirectposdevices:i:0",
+            "drivestoredirect:s:",
+            "camerastoredirect:s:",
+            "devicestoredirect:s:",
+            "usbdevicestoredirect:s:"
         ]
         if !user.isEmpty {
             lines.append("username:s:\(UnattendBuilder.sanitizedUserName(user))")
@@ -365,83 +355,6 @@ struct VMDetailView: View {
             }
         } catch {
             model.show(error, title: "RDP-Datei konnte nicht geschrieben werden")
-        }
-    }
-
-    // MARK: Geteilte Ordner
-
-    private var sharedFoldersSection: some View {
-        GroupBox {
-            VStack(alignment: .leading, spacing: 8) {
-                if config.sharedFolders.isEmpty {
-                    Text("Keine Ordner freigegeben.")
-                        .foregroundStyle(.secondary)
-                }
-                ForEach(config.sharedFolders) { folder in
-                    HStack {
-                        Image(systemName: "folder")
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(folder.name)
-                            Text(folder.hostPath)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                        }
-                        Spacer()
-                        Toggle("Nur lesen", isOn: Binding(
-                            get: { folder.readOnly },
-                            set: { value in
-                                update { config in
-                                    if let index = config.sharedFolders.firstIndex(where: { $0.id == folder.id }) {
-                                        config.sharedFolders[index].readOnly = value
-                                    }
-                                }
-                            }))
-                            .toggleStyle(.checkbox)
-                            .disabled(isActive)
-                        Button {
-                            update { $0.sharedFolders.removeAll { $0.id == folder.id } }
-                        } label: {
-                            Image(systemName: "minus.circle")
-                        }
-                        .buttonStyle(.borderless)
-                        .disabled(isActive)
-                    }
-                }
-                Button("Ordner hinzufügen …") { addSharedFolder() }
-                    .disabled(isActive || config.guestOS == .windows)
-                Hint(sharedFolderHint)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(4)
-        } label: {
-            Label("Geteilte Ordner", systemImage: "folder")
-        }
-    }
-
-    private var sharedFolderHint: String {
-        switch (config.guestOS, config.engine) {
-        case (.linux, .appleVirtualization):
-            return "Im Gast unter /mnt/pluralism/<Name> (virtiofs). Die Pluralism Tools tragen das automatisch ein, sonst: sudo mount -t virtiofs pluralism /mnt/pluralism"
-        case (.linux, .qemu):
-            return "Im Gast: sudo mount -t 9p -o trans=virtio,version=9p2000.L <Name> /mnt/<Name>"
-        case (.windows, _):
-            return "Für Windows gibt es noch keine direkte Freigabe. Übergangsweise: in macOS die Dateifreigabe einschalten (Systemeinstellungen, Allgemein, Teilen) und in Windows \\\\10.0.2.2\\<Freigabe> verbinden, oder per Remote Desktop Laufwerke umleiten."
-        }
-    }
-
-    private func addSharedFolder() {
-        guard let url = FilePicker.chooseDirectory(title: "Ordner für die VM freigeben") else { return }
-        update { config in
-            var name = SharedFolder.sanitizedName(url.lastPathComponent)
-            var counter = 2
-            let base = name
-            while config.sharedFolders.contains(where: { $0.name.lowercased() == name.lowercased() }) {
-                name = "\(base)-\(counter)"
-                counter += 1
-            }
-            config.sharedFolders.append(SharedFolder(name: name, hostPath: url.path))
         }
     }
 
