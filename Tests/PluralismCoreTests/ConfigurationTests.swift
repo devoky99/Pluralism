@@ -96,6 +96,9 @@ final class ConfigurationTests: XCTestCase {
 
     func testJSONRoundTrip() throws {
         var config = VMConfiguration.makeDefault(name: "Test", guestOS: .windows, host: host)
+        // ISO 8601 speichert ganze Sekunden, daher ein Datum ohne Bruchteile.
+        config.createdAt = Date(timeIntervalSince1970: 1_800_000_000)
+        config.lastStartedAt = Date(timeIntervalSince1970: 1_800_000_600)
         config.sharedFolders = [SharedFolder(name: "Projekte", hostPath: "/Users/musti/Projekte", readOnly: true)]
         config.network.portForwards = [PortForward(proto: .tcp, hostPort: 2222, guestPort: 22, label: "SSH")]
         let data = try PluralismJSON.encoder().encode(config)
