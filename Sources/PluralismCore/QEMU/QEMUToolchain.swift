@@ -30,7 +30,7 @@ public struct QEMUToolchain: Equatable, Sendable {
         self.version = version
     }
 
-    /// CRB-TPM, das Windows ARM64 auf Apple Silicon zuverlässig erkennt (UTM-QEMU-Fork).
+    /// CRB-TPM, das Windows ARM64 auf Apple Silicon zuverlässig erkennt (braucht einen gepatchten QEMU-Build).
     public var supportsTPMCRB: Bool { devices.contains("tpm-crb-device") }
     /// TIS-TPM aus dem normalen QEMU. Unter Hypervisor.framework mit Windows laut Berichten unzuverlässig.
     public var supportsTPMTIS: Bool { devices.contains("tpm-tis-device") }

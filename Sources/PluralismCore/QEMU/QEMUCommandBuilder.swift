@@ -43,7 +43,7 @@ public struct QEMULaunchPlan: Equatable, Sendable {
 
 /// Baut die QEMU-Kommandozeile für eine VM.
 ///
-/// Grundlage ist die Konfiguration, die UTM für Windows 11 ARM64 erzeugt, angepasst an
+/// Grundlage sind bewährte Konfigurationen für Windows 11 ARM64 unter QEMU, angepasst an
 /// das normale QEMU aus Homebrew (siehe docs/research/windows-arm-guests.md, Abschnitt 6):
 /// - `virt`-Maschine mit GICv3, Beschleunigung über Hypervisor.framework (`-accel hvf`)
 /// - UEFI (edk2) mit eigener Variablen-Datei pro VM

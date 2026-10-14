@@ -11,7 +11,7 @@ Apple stellt auf Apple Silicon zwei Wege zur Virtualisierung bereit:
 | Ebene | Fertiger VM-Baukasten mit Geräten (virtio) | Rohe CPU-Virtualisierung: vCPU-Threads, Speicher, Interrupt-Controller |
 | Geräte | Von Apple: virtio-blk, virtio-net, virtio-gpu (2D), virtiofs, Ton, SPICE-Zwischenablage, USB-Speicher | Muss die App selbst emulieren |
 | Linux | Sehr gut, offiziell | Möglich, viel Eigenarbeit |
-| Windows 11 ARM | Nur mit privaten APIs, kein TPM, kein Secure Boot vor macOS 27, feste Auflösung | Geht, so machen es Parallels (eigener VMM), VMware und UTM (QEMU) |
+| Windows 11 ARM | Nur mit privaten APIs, kein TPM, kein Secure Boot vor macOS 27, feste Auflösung | Geht, so machen es Parallels und VMware mit eigenen VMMs |
 
 Pluralism nutzt deshalb:
 
@@ -102,7 +102,7 @@ Geräte (Apples Beispiel „Running GUI Linux in a virtual machine on a Mac“ p
 
 ## Windows-Gast im Detail
 
-QEMU-Aufruf (gekürzt), abgeleitet von UTMs Konfiguration für Windows 11 ARM64:
+QEMU-Aufruf (gekürzt), abgeleitet von bewährten Konfigurationen für Windows 11 ARM64:
 
 ```
 qemu-system-aarch64 -nodefaults -machine virt,gic-version=3 -accel hvf -cpu host
@@ -128,7 +128,7 @@ Warum so:
 - **virtio-net** braucht den Treiber NetKVM. Pluralism kopiert ihn beim Anlegen aus dem virtio-win-ISO
   in das Antwort-Medium, das Einrichtungsskript installiert ihn nach der ersten Anmeldung per `pnputil`.
 - **TPM:** Das normale QEMU bietet unter ARM nur `tpm-tis-device`, das Windows ARM auf Apple Silicon laut
-  Berichten nicht zuverlässig nutzt („Code 10“). UTMs QEMU-Fork bringt `tpm-crb-device`, das funktioniert.
+  Berichten nicht zuverlässig nutzt („Code 10“). Mit dem Gerät `tpm-crb-device` (ein Patch für QEMU) klappt es.
   Pluralism erkennt, welches Gerät vorhanden ist. Standard ist „kein TPM“ plus Umgehung der Prüfung.
 - **Usermode-Netz** (slirp) braucht weder Root noch Sonderrechte. Der Mac erreicht Windows über
   Portweiterleitungen, Windows erreicht den Mac unter 10.0.2.2.
@@ -143,7 +143,8 @@ eigenen Puffer (32 Bit, BGRX), `RFBDisplayView` zeigt es seitenverhältnistreu a
 - Mac-Kürzel: Cmd+Buchstabe wird zu Strg+Buchstabe, Cmd allein ist die Windows-Taste,
   Cmd+Q/W/H/M/Tab bleiben beim Mac.
 - Maus als absolute Koordinaten (USB-Tablet), Scrollen mit Trackpad-Glättung.
-- Zwischenablage: Text vom Mac zum Gast über RFB-ClientCutText und den vdagent-Kanal.
+- Zwischenablage: vorbereitet über den SPICE-Agent-Kanal (virtio-serial). Für Windows ARM gibt es dafür noch
+  keinen eigenen Agenten, bis dahin läuft die Zwischenablage über Remote Desktop.
 
 ### Automatische Installation
 
@@ -154,7 +155,7 @@ eigenen Puffer (32 Bit, BGRX), `RFBDisplayView` zeigt es seitenverhältnistreu a
 3. Edition per Schlüssel (Standard: öffentlicher KMS-Client-Schlüssel für Pro, aktiviert nicht)
 4. Lokales Konto, Online-Konto-Seiten ausgeblendet, `BypassNRO` gesetzt, einmal automatisch anmelden
 5. Erste Anmeldung: `pluralism-setup.cmd` sucht sein Medium auf D: bis Z:, installiert Treiber
-   (`pnputil`), virtio-win- und SPICE-Gasttools, schaltet Remote Desktop und Firewall-Regel frei,
+   (`pnputil`) und die virtio-win-Gasttools, schaltet Remote Desktop und Firewall-Regel frei,
    deaktiviert den Ruhezustand
 
 Die Sprache des ISOs liest Pluralism aus `sources/lang.ini`, damit die Antwortdatei dazu passt.

@@ -7,7 +7,6 @@ enum PreferenceKeys {
     static let qemuPathOverride = "qemuPathOverride"
     static let keyboardLayout = "keyboardLayout"          // "", "iso", "ansi"
     static let virtioISOPath = "virtioISOPath"
-    static let guestToolsISOPath = "guestToolsISOPath"
 }
 
 /// Ergebnis der Werkzeugsuche, mit verständlichen Zeilen für die Einstellungen.

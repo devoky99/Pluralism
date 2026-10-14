@@ -17,12 +17,13 @@ Grundlage: [research/feature-parity.md](research/feature-parity.md).
 
 | Aufgabe | Aufwand | Weg |
 |---|---|---|
-| Zwischenablage Gast → Mac im Pluralism-Fenster | M | VNC „Extended Clipboard“ (Pseudo-Kodierung 0xC0A1E5CE) im RFB-Client, zlib-Daten |
+| Pluralism Tools für Windows | M | Eigener ARM64-Agent über virtio-serial (Treiber vioserial aus virtio-win): Zwischenablage in beide Richtungen, Auflösung, Zeit nach dem Fortsetzen |
+| Zwischenablage im Pluralism-Fenster | M | VNC „Extended Clipboard“ (Pseudo-Kodierung 0xC0A1E5CE) im RFB-Client, zlib-Daten |
 | Mauszeiger des Gasts als Mac-Cursor | S | RFB-Kodierung „Cursor“ (-239), NSCursor aus Bild und Maske |
 | Dynamische Auflösung | M | virtio-gpu + viogpudo, Fenstergröße per VNC `SetDesktopSize` bzw. QEMU-UI-Info weitergeben |
 | Geteilte Ordner für Windows | M | QEMU `-netdev user,smb=` mit Samba aus Homebrew, alternativ SPICE-WebDAV |
 | Snapshots im laufenden Betrieb | M | QMP `snapshot-save` / `snapshot-load` für qcow2 |
-| Echtes TPM 2.0 | M | Build-Skript für UTMs QEMU-Fork (`tpm-crb-device`, Secure-Boot-Firmware) |
+| Echtes TPM 2.0 | M | Eigener QEMU-Build mit CRB-TPM-Patch (`tpm-crb-device`) und Secure-Boot-Firmware |
 | Netzwerk mit Portweiterleitung für Linux | M | macOS 26: `VZVmnetNetworkDeviceAttachment` mit vmnet-Portregeln |
 | Kommandozeile `pluralismctl` | S | list, start, stop, ssh, ip über eine kleine XPC- oder Socket-Schnittstelle |
 
@@ -51,7 +52,7 @@ Grundlage: [research/feature-parity.md](research/feature-parity.md).
 |---|---|---|
 | 3D für Linux (Apple-Engine) | L | macOS 27 `VZCustomVirtioDevice`: eigenes virtio-gpu mit virglrenderer + ANGLE auf Metal |
 | 3D für Linux (QEMU-Engine) | M | QEMU mit virglrenderer/Venus und MoltenVK oder KosmicKrisp |
-| DirectX für Windows | XL | UTMs Triton/Neptune-Treiber verfolgen (noch instabil), Host-Seite DXMT |
+| DirectX für Windows | XL | Experimentelle virtio-gpu-3D-Treiber für Windows ARM verfolgen (noch instabil), Host-Seite DXMT |
 
 ## Langfristig: eigener Hypervisor-Kern
 

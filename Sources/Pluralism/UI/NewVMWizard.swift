@@ -12,7 +12,6 @@ struct NewVMWizard: View {
     @State private var name = "Linux"
     @State private var installerPath = ""
     @State private var virtioPath = UserDefaults.standard.string(forKey: PreferenceKeys.virtioISOPath) ?? ""
-    @State private var guestToolsPath = UserDefaults.standard.string(forKey: PreferenceKeys.guestToolsISOPath) ?? ""
     @State private var unattend = UnattendSettings(userName: NSUserName())
     @State private var password = ""
     @State private var regionID = "de-DE"
@@ -193,23 +192,6 @@ struct NewVMWizard: View {
                     }
                     Hint("Enthält die ARM64-Treiber für Netzwerk (NetKVM), Anzeige, Ballon und mehr. Pluralism kopiert sie in die Antwortdatei.")
                 }
-                Section("Zwischenablage (optional)") {
-                    HStack {
-                        TextField("utm-guest-tools.iso", text: $guestToolsPath)
-                        Button("Auswählen …") {
-                            if let url = FilePicker.chooseFile(title: "Gasttools-ISO wählen", extensions: ["iso"]) {
-                                guestToolsPath = url.path
-                                UserDefaults.standard.set(url.path, forKey: PreferenceKeys.guestToolsISOPath)
-                            }
-                        }
-                    }
-                    DownloadButton(downloads: model.downloads, id: "guesttools", title: "SPICE-Gasttools herunterladen",
-                                   url: DownloadService.guestToolsURL, fileName: "utm-guest-tools.iso") { url in
-                        guestToolsPath = url.path
-                        UserDefaults.standard.set(url.path, forKey: PreferenceKeys.guestToolsISOPath)
-                    }
-                    Hint("Die Gasttools von UTM enthalten den SPICE-Agenten für ARM64, über den die Zwischenablage läuft.")
-                }
                 Section("Automatische Installation") {
                     Toggle("Windows automatisch installieren", isOn: $unattend.enabled)
                     if unattend.enabled {
@@ -386,8 +368,7 @@ struct NewVMWizard: View {
         let request = AppModel.NewVMRequest(configuration: config,
                                             password: password,
                                             windowsISO: existingURL(installerPath),
-                                            virtioISO: existingURL(virtioPath),
-                                            guestToolsISO: existingURL(guestToolsPath))
+                                            virtioISO: existingURL(virtioPath))
         model.createVM(request) { result in
             creating = false
             switch result {

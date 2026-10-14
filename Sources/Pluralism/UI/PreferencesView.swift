@@ -107,7 +107,7 @@ private struct QEMUPreferences: View {
                         }
                     }
                 }
-                Hint("Zum Beispiel ein QEMU mit tpm-crb-device (UTM-Fork) für ein echtes TPM unter Windows. Leer lassen für Homebrew.")
+                Hint("Zum Beispiel ein eigener QEMU-Build mit dem Gerät tpm-crb-device für ein echtes TPM unter Windows. Leer lassen für Homebrew.")
             }
         }
         .formStyle(.grouped)
@@ -117,7 +117,6 @@ private struct QEMUPreferences: View {
 private struct MediaPreferences: View {
     @ObservedObject var downloads: DownloadService
     @AppStorage(PreferenceKeys.virtioISOPath) private var virtioPath = ""
-    @AppStorage(PreferenceKeys.guestToolsISOPath) private var guestToolsPath = ""
 
     var body: some View {
         Form {
@@ -126,13 +125,6 @@ private struct MediaPreferences: View {
                 DownloadButton(downloads: downloads, id: "virtio", title: "Herunterladen",
                                url: DownloadService.virtioWinURL, fileName: "virtio-win.iso") { url in
                     virtioPath = url.path
-                }
-            }
-            Section("SPICE-Gasttools (Zwischenablage unter Windows)") {
-                LabeledContent("Datei", value: guestToolsPath.isEmpty ? "keine" : guestToolsPath)
-                DownloadButton(downloads: downloads, id: "guesttools", title: "Herunterladen",
-                               url: DownloadService.guestToolsURL, fileName: "utm-guest-tools.iso") { url in
-                    guestToolsPath = url.path
                 }
             }
             Section("Windows 11 ARM64") {

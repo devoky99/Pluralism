@@ -1,11 +1,9 @@
 import Foundation
 
-/// Lädt Treiber- und Werkzeug-Abbilder herunter (virtio-win, UTM-Gasttools).
+/// Lädt das Treiber-Abbild virtio-win herunter.
 final class DownloadService: ObservableObject {
     /// virtio-win (Red Hat/Fedora, BSD-Lizenz): ARM64-Treiber für Netzwerk, Speicher, Anzeige usw.
     static let virtioWinURL = URL(string: "https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/stable-virtio/virtio-win.iso")!
-    /// UTM-Gasttools (zlib-Lizenz): enthalten den ARM64-SPICE-Agent für die Zwischenablage.
-    static let guestToolsURL = URL(string: "https://getutm.app/downloads/utm-guest-tools-latest.iso")!
     /// Offizielle Download-Seite von Microsoft für Windows 11 ARM64.
     static let windowsARMPageURL = URL(string: "https://www.microsoft.com/de-de/software-download/windows11arm64")!
 

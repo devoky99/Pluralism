@@ -110,7 +110,6 @@ final class AppModel: ObservableObject {
         var password: String
         var windowsISO: URL?
         var virtioISO: URL?
-        var guestToolsISO: URL?
     }
 
     func createVM(_ request: NewVMRequest, completion: @escaping (Result<VMConfiguration, Error>) -> Void) {
@@ -131,8 +130,7 @@ final class AppModel: ObservableObject {
                             password: request.password,
                             enableRemoteDesktop: config.windows.rdpHostPort != nil,
                             windowsISO: request.windowsISO,
-                            virtioISO: request.virtioISO,
-                            guestToolsISO: request.guestToolsISO)
+                            virtioISO: request.virtioISO)
                         config.media.hasUnattendMedia = true
                     }
                     if config.guestOS == .linux {

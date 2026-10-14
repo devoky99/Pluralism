@@ -17,8 +17,7 @@ enum GuestMediaBuilder {
                                        password: String,
                                        enableRemoteDesktop: Bool,
                                        windowsISO: URL?,
-                                       virtioISO: URL?,
-                                       guestToolsISO: URL? = nil) throws -> WindowsResult {
+                                       virtioISO: URL?) throws -> WindowsResult {
         let fm = FileManager.default
         let staging = fm.temporaryDirectory.appendingPathComponent("pluralism-setup-\(UUID().uuidString)", isDirectory: true)
         try fm.createDirectory(at: staging, withIntermediateDirectories: true)
@@ -57,17 +56,6 @@ enum GuestMediaBuilder {
             let installer = mount.appendingPathComponent("virtio-win-guest-tools.exe")
             if fm.fileExists(atPath: installer.path) {
                 try fm.copyItem(at: installer, to: staging.appendingPathComponent("virtio-win-guest-tools.exe"))
-            }
-        }
-
-        // SPICE-Gasttools (UTM, enthalten den ARM64-Agenten für die Zwischenablage):
-        // den Installer unter festem Namen übernehmen, damit das Einrichtungsskript ihn findet.
-        if let guestToolsISO, fm.fileExists(atPath: guestToolsISO.path) {
-            let mount = try ISOBuilder.attach(guestToolsISO)
-            defer { ISOBuilder.detach(mount) }
-            let candidates = (try? fm.contentsOfDirectory(at: mount, includingPropertiesForKeys: nil)) ?? []
-            if let installer = candidates.first(where: { $0.pathExtension.lowercased() == "exe" }) {
-                try fm.copyItem(at: installer, to: staging.appendingPathComponent("utm-guest-tools.exe"))
             }
         }
 

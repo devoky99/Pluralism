@@ -45,8 +45,7 @@ gesichert, wenn in den VM-Einstellungen unter Erweitert „Anhalten ermöglichen
    dass QEMU, qemu-img und die UEFI-Firmware gefunden werden.
 2. Windows 11 **ARM64**-ISO bei Microsoft laden (Knopf im Assistenten öffnet die Seite).
 3. **Neue VM** → Windows 11 → ISO wählen.
-4. Im selben Schritt **virtio-win herunterladen** (Treiber, ca. 700 MB) und optional die
-   **SPICE-Gasttools** (für die Zwischenablage).
+4. Im selben Schritt **virtio-win herunterladen** (Treiber, ca. 700 MB).
 5. Benutzername und Passwort eintragen, Sprache wählen, weiter bis **VM anlegen**.
 6. **Starten**. Windows installiert sich selbst und startet dabei mehrmals neu (15 bis 30 Minuten).
    Erscheint am Anfang „Press any key to boot from CD“, einfach warten.
@@ -57,9 +56,9 @@ Tipps:
 
 - **Strg+Alt+Entf** gibt es in der Werkzeugleiste des VM-Fensters.
 - **Cmd+C / Cmd+V** werden in Windows zu Strg+C / Strg+V.
-- **Bessere Integration sofort:** die „Windows App“ von Microsoft aus dem Mac App Store installieren und
-  in Pluralism **RDP-Verbindung öffnen** wählen. Damit gibt es dynamische Auflösung, Ton, Zwischenablage
-  in beide Richtungen und Laufwerke.
+- **Zwischenablage und bessere Integration:** die „Windows App“ von Microsoft aus dem Mac App Store
+  installieren und in Pluralism **RDP-Verbindung öffnen** wählen. Damit gibt es dynamische Auflösung, Ton,
+  Zwischenablage in beide Richtungen und Laufwerke.
 - **Andere Auflösungen ohne RDP:** in Windows den Treiber `viogpudo` installieren
   (liegt im Ordner `pluralism-drivers` auf dem Setup-Medium bzw. auf dem virtio-win-ISO), VM ausschalten,
   in den Einstellungen unter Anzeige **virtio-gpu** wählen. Bei schwarzem Bild zurück auf ramfb.

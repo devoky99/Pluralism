@@ -70,8 +70,7 @@ public struct ResourceLimits: Equatable, Sendable {
 ///
 /// Leitlinien aus der Recherche:
 /// - vCPU-Threads werden von macOS frei auf P- und E-Kerne verteilt. Mehr vCPUs als
-///   Performance-Kerne bringen meist wenig und kosten Akku. UTM nimmt für Windows
-///   standardmäßig die Zahl der P-Kerne.
+///   Performance-Kerne bringen meist wenig und kosten Akku.
 /// - Hypervisor-Gäste sehen alle Kerne als gleich (keine P/E-Unterscheidung im Gast).
 /// - macOS braucht selbst genug Speicher, sonst fängt das System an auszulagern.
 public enum ResourceAdvisor {

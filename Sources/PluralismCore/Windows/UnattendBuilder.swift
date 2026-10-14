@@ -4,8 +4,7 @@ import Foundation
 /// automatische Installation von Windows 11 ARM64.
 ///
 /// Was die Antwortdatei erledigt:
-/// - Hardwareprüfungen umgehen (TPM, Secure Boot, RAM, CPU) über die LabConfig-Schlüssel,
-///   die auch UTMs Antwortdatei setzt
+/// - Hardwareprüfungen umgehen (TPM, Secure Boot, RAM, CPU) über die LabConfig-Schlüssel
 /// - Platte 0 (die NVMe-Systemplatte) partitionieren: EFI, MSR, Windows
 /// - Edition per Schlüssel auswählen, Lizenz akzeptieren
 /// - Lokales Konto anlegen, Online-Konto-Seiten ausblenden, einmal automatisch anmelden
@@ -196,7 +195,6 @@ public enum UnattendBuilder {
             lines.append("if exist \"%PLURALISMSRC%\\\(driverFolderName)\" pnputil /add-driver \"%PLURALISMSRC%\\\(driverFolderName)\\*.inf\" /subdirs /install")
             lines.append("for %%L in (D E F G H I J K L M N O P Q R S T U V W X Y Z) do (")
             lines.append("  if exist \"%%L:\\virtio-win-guest-tools.exe\" start \"\" /wait \"%%L:\\virtio-win-guest-tools.exe\" /install /quiet /norestart")
-            lines.append("  if exist \"%%L:\\utm-guest-tools.exe\" start \"\" /wait \"%%L:\\utm-guest-tools.exe\" /S")
             lines.append(")")
         }
         if input.enableRemoteDesktop {

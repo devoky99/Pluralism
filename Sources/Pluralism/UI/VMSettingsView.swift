@@ -130,7 +130,7 @@ struct VMSettingsView: View {
                         Text(frontend.displayName).tag(frontend)
                     }
                 }
-                Hint("„Eigenes QEMU-Fenster“ unterstützt die gemeinsame Zwischenablage in beide Richtungen. Im Pluralism-Fenster geht Text bisher nur vom Mac zum Gast.")
+                Hint(draft.guestOS == .windows ? "Zwischenablage für Windows vorerst über Remote Desktop (Windows App von Microsoft)." : "„Eigenes QEMU-Fenster“ unterstützt die Zwischenablage in beide Richtungen, im Pluralism-Fenster geht Text vom Mac zum Gast.")
             }
         }
     }
@@ -204,7 +204,7 @@ struct VMSettingsView: View {
                 if toolchain?.swtpmPath == nil {
                     Hint("swtpm fehlt: brew install swtpm")
                 } else if toolchain?.supportsTPMCRB == false {
-                    Hint("Dieses QEMU hat nur tpm-tis-device. Mit Windows ARM auf Apple Silicon meldet Windows dann oft „Code 10“. Ein QEMU mit tpm-crb-device (UTM-Fork) behebt das.")
+                    Hint("Dieses QEMU hat nur tpm-tis-device. Mit Windows ARM auf Apple Silicon meldet Windows dann oft „Code 10“. Ein QEMU-Build mit tpm-crb-device behebt das.")
                 }
             }
             Toggle("Secure Boot", isOn: $draft.windows.secureBoot)

@@ -10,7 +10,7 @@ Zielrechner: MacBook Pro 14" mit M4 Pro (8 Performance- und 4 Effizienz-Kerne, 4
 | Gast | Engine | Warum |
 |---|---|---|
 | Linux ARM64 | Apples **Virtualization.framework** | Offiziell, sehr schnell, bringt virtiofs, Zwischenablage, automatische Auflösung, Ton und verschachtelte Virtualisierung mit |
-| Windows 11 ARM64 | **QEMU** als eigener Prozess, beschleunigt über Apples **Hypervisor.framework** (`-accel hvf`) | Apples Framework startet Windows nur mit privaten APIs und ohne TPM. QEMU ist der Weg, den auch UTM geht |
+| Windows 11 ARM64 | **QEMU** als eigener Prozess, beschleunigt über Apples **Hypervisor.framework** (`-accel hvf`) | Apples Framework startet Windows nur mit privaten APIs und ohne TPM. QEMU mit Hypervisor.framework ist dafür der bewährte Weg |
 
 Die App ist in zwei Teile getrennt:
 
@@ -69,7 +69,7 @@ swift test
 ## Grenzen (Stand 0.1)
 
 - Keine Brücke ins Netzwerk des Macs (bridged): braucht ein Entitlement, das Apple nur auf Anfrage vergibt.
-- Windows: Zwischenablage im Pluralism-Fenster nur vom Mac zum Gast. Volle Zwischenablage über das eigene
-  QEMU-Fenster oder per Remote Desktop.
+- Windows: gemeinsame Zwischenablage vorerst nur per Remote Desktop. Eigene Pluralism Tools für Windows
+  (Zwischenablage, Auflösung) sind geplant.
 - Windows: keine direkten geteilten Ordner (virtiofs hat unter macOS keinen Host-Dienst). Übergangsweise SMB oder RDP.
 - Keine 3D-Beschleunigung, kein Coherence, kein USB-Durchreichen. Siehe Roadmap.

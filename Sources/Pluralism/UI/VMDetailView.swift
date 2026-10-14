@@ -323,7 +323,7 @@ struct VMDetailView: View {
                         Button("RDP-Verbindung öffnen") { openRemoteDesktop(port: port) }
                             .disabled(session.state != .running)
                     }
-                    Hint("Mit der „Windows App“ von Microsoft (Mac App Store) bekommst du so dynamische Auflösung, Ton, Zwischenablage und Laufwerke. Remote Desktop braucht Windows 11 Pro.")
+                    Hint("Mit der „Windows App“ von Microsoft (Mac App Store) bekommst du so dynamische Auflösung, Ton, Zwischenablage und Laufwerke. Remote Desktop braucht Windows 11 Pro. Eine eigene Zwischenablage für Windows (Pluralism Tools) steht auf der Roadmap.")
                 }
                 HStack(spacing: 16) {
                     Text("TPM: \(config.windows.tpm.displayName)")
@@ -331,12 +331,7 @@ struct VMDetailView: View {
                 }
                 .foregroundStyle(.secondary)
                 if session.state == .running {
-                    HStack {
-                        Button("Strg+Alt+Entf senden") { session.engine.sendCtrlAltDelete() }
-                        if config.display.qemuFrontend == .integrated {
-                            Button("Mac-Zwischenablage senden") { session.engine.sendClipboardToGuest() }
-                        }
-                    }
+                    Button("Strg+Alt+Entf senden") { session.engine.sendCtrlAltDelete() }
                 }
                 Hint("Andere Auflösungen: im Gast den virtio-gpu-Treiber (viogpudo) installieren, VM ausschalten und in den Einstellungen unter Anzeige auf virtio-gpu umstellen.")
             }
