@@ -21,7 +21,7 @@ JOBS="$(sysctl -n hw.ncpu)"
 echo "==> Bauwerkzeuge und Bibliotheken (Homebrew)"
 export HOMEBREW_NO_AUTO_UPDATE=1
 export HOMEBREW_NO_INSTALL_CLEANUP=1
-brew install --quiet ninja pkgconf glib pixman libslirp dtc "$SWTPM_FORMULA" || true
+brew install --quiet ninja pkgconf glib pixman libslirp "$SWTPM_FORMULA" || true
 for tool in ninja pkg-config; do
   command -v "$tool" >/dev/null || { echo "Fehlt: $tool"; exit 1; }
 done
@@ -53,7 +53,7 @@ echo "==> QEMU konfigurieren"
   --enable-coreaudio \
   --enable-slirp \
   --enable-tpm \
-  --enable-fdt=system \
+  --enable-fdt=internal \
   --disable-docs \
   --disable-guest-agent \
   --disable-werror \
