@@ -205,8 +205,40 @@ final class QEMUTests: XCTestCase {
         let base = "/tmp/pluralism-501/\(config.shortID)"
         XCTAssertEqual(values(after: "-netdev", in: plan.qemu.arguments),
                        ["stream,id=net0,server=off,addr.type=unix,addr.path=\(base)/net.sock,reconnect-ms=1000"])
-        XCTAssertTrue(values(after: "-device", in: plan.qemu.arguments).contains("virtio-net-pci,netdev=net0,mac=\(config.network.macAddress)"))
+        XCTAssertTrue(values(after: "-device", in: plan.qemu.arguments).contains("virtio-net-pci,netdev=net0,mac=\(config.network.macAddress),romfile="))
         XCTAssertTrue(runtime.allSocketPathsFit)
+    }
+
+    func testNativeVmnetBackendLikeUTM() throws {
+        let config = windowsConfig()
+        let runtime = RuntimePaths(config: config, userID: 501)
+        let planned = FixedSubnet.addressing(slot: 3, mode: .nat)
+        let plan = try QEMUCommandBuilder.makePlan(config: config, bundle: bundle, toolchain: toolchain, runtime: runtime,
+                                                   media: QEMUMedia(), network: .vmnet(hostOnly: false, addressing: planned))
+        XCTAssertEqual(values(after: "-netdev", in: plan.qemu.arguments),
+                       ["vmnet-shared,id=net0,start-address=192.168.163.1,end-address=192.168.163.254,subnet-mask=255.255.255.0"])
+        XCTAssertEqual(QEMUCommandBuilder.netdevArgument(.vmnet(hostOnly: true, addressing: nil), restrictToHost: true), "vmnet-host,id=net0")
+    }
+
+    func testNetdevHelpParsingAndNativeVmnetSupport() {
+        let output = """
+        Available netdev backend types:
+        socket
+        stream
+        dgram
+        user
+        vmnet-host
+        vmnet-shared
+        vmnet-bridged
+        """
+        let netdevs = QEMUToolchainLocator.parseNetdevHelp(output)
+        XCTAssertEqual(netdevs, ["socket", "stream", "dgram", "user", "vmnet-host", "vmnet-shared", "vmnet-bridged"])
+        var toolchain = QEMUToolchain(qemuSystemPath: "/q", netdevs: netdevs, hasVirtualizationEntitlement: false)
+        XCTAssertFalse(toolchain.supportsNativeVmnet)
+        toolchain.hasVirtualizationEntitlement = true
+        XCTAssertTrue(toolchain.supportsNativeVmnet)
+        toolchain.netdevs = ["user", "stream"]
+        XCTAssertFalse(toolchain.supportsNativeVmnet)
     }
 
     func testHostOnlyFallbackIsRestricted() throws {

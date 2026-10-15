@@ -69,6 +69,10 @@ enum ToolchainDetector {
 
         let deviceOutput = (try? ShellCommand.run(qemu, ["-machine", "virt", "-device", "help"], timeout: 30).output) ?? ""
         let devices = QEMUToolchainLocator.parseDeviceHelp(deviceOutput)
+        let netdevOutput = (try? ShellCommand.run(qemu, ["-machine", "none", "-netdev", "help"], timeout: 20).output) ?? ""
+        let netdevs = QEMUToolchainLocator.parseNetdevHelp(netdevOutput)
+        let signature = (try? ShellCommand.run("/usr/bin/codesign", ["-d", "--entitlements", "-", "--xml", qemu], timeout: 20).output) ?? ""
+        let virtualization = signature.contains("com.apple.security.virtualization")
 
         let qemuImg = findBinary("qemu-img", preferredDirectory: qemuDir)
         lines.append(("qemu-img", qemuImg ?? "nicht gefunden", qemuImg != nil))
@@ -106,7 +110,11 @@ enum ToolchainDetector {
         let toolchain = QEMUToolchain(qemuSystemPath: qemu, qemuImgPath: qemuImg, swtpmPath: swtpm,
                                       firmwareCodePath: code, firmwareVarsTemplatePath: vars,
                                       secureFirmwareCodePath: secureCode, secureFirmwareVarsTemplatePath: secureVars,
-                                      devices: devices, version: version)
+                                      devices: devices, version: version,
+                                      netdevs: netdevs, hasVirtualizationEntitlement: virtualization)
+        lines.append(("Netzwerk", toolchain.supportsNativeVmnet
+                      ? "vmnet direkt in QEMU"
+                      : "über die Paketbrücke von Pluralism", true))
         return ToolchainReport(toolchain: toolchain, lines: lines.map { (label: $0.0, value: $0.1, ok: $0.2) })
     }
 }

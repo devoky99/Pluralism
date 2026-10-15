@@ -299,6 +299,21 @@ public struct GuestNetworkAddressing: Codable, Equatable, Sendable {
     }
 
     public var description: String { "\(subnet)/\(prefixLength)" }
+
+    /// Netzmaske, z. B. 255.255.255.0.
+    public var subnetMask: String {
+        let value: UInt32 = prefixLength == 0 ? 0 : UInt32.max << (32 - UInt32(prefixLength))
+        return "\(value >> 24).\((value >> 16) & 0xFF).\((value >> 8) & 0xFF).\(value & 0xFF)"
+    }
+
+    /// Letzte vergebbare Adresse (vor der Broadcast-Adresse).
+    public var lastHostAddress: String {
+        let parts = subnet.split(separator: ".").compactMap { UInt32($0) }
+        guard parts.count == 4 else { return subnet }
+        let base = parts[0] << 24 | parts[1] << 16 | parts[2] << 8 | parts[3]
+        let last = base + (prefixLength >= 31 ? 0 : (UInt32(1) << (32 - UInt32(prefixLength))) - 2)
+        return "\(last >> 24).\((last >> 16) & 0xFF).\((last >> 8) & 0xFF).\(last & 0xFF)"
+    }
 }
 
 public enum PortProtocol: String, Codable, CaseIterable, Identifiable, Sendable {

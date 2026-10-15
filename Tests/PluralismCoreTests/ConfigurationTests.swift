@@ -195,6 +195,15 @@ final class ConfigurationTests: XCTestCase {
         XCTAssertNil(GuestNetworkAddressing.from(network: [1, 2, 3, 4], mask: [255, 255, 255, 255]))
     }
 
+    func testAddressingMaskAndRange() {
+        let planned = FixedSubnet.addressing(slot: 0, mode: .hostOnly)
+        XCTAssertEqual(planned?.subnetMask, "255.255.255.0")
+        XCTAssertEqual(planned?.lastHostAddress, "192.168.200.254")
+        let wide = GuestNetworkAddressing(subnet: "10.0.0.0", prefixLength: 16, hostAddress: "10.0.0.1", guestAddress: nil)
+        XCTAssertEqual(wide.subnetMask, "255.255.0.0")
+        XCTAssertEqual(wide.lastHostAddress, "10.0.255.254")
+    }
+
     func testFixedSubnet() {
         XCTAssertEqual(FixedSubnet.hostAddress(slot: 0, mode: .nat), "192.168.160.1")
         XCTAssertEqual(FixedSubnet.hostAddress(slot: 39, mode: .hostOnly), "192.168.239.1")

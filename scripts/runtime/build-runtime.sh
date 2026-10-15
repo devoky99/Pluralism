@@ -39,8 +39,9 @@ cd "qemu-$QEMU_VERSION"
 
 echo "==> QEMU konfigurieren"
 # Nur was Pluralism braucht: ARM64-Gäste mit Hypervisor.framework, VNC für das Pluralism-Fenster,
-# Cocoa für das optionale eigene Fenster, CoreAudio, Usermode-Netz als Ausweichweg, TPM über swtpm,
-# qemu-img für Plattenabbilder. Keine Gastagenten, keine Ordnerfreigaben (Isolation).
+# Cocoa für das optionale eigene Fenster, CoreAudio, vmnet (wie bei UTM: QEMU legt das Netz selbst an),
+# Usermode-Netz als Ausweichweg, TPM über swtpm, qemu-img für Plattenabbilder.
+# Keine Gastagenten, keine Ordnerfreigaben (Isolation).
 ./configure \
   --prefix="$PREFIX" \
   --target-list=aarch64-softmmu \
@@ -52,6 +53,7 @@ echo "==> QEMU konfigurieren"
   --enable-cocoa \
   --enable-coreaudio \
   --enable-slirp \
+  --enable-vmnet \
   --enable-tpm \
   --enable-fdt=internal \
   --disable-docs \
@@ -70,6 +72,7 @@ python3 "$ROOT/scripts/runtime/assemble.py" \
   --prefix "$PREFIX" \
   --swtpm "$SWTPM_BIN" \
   --qemu-source "$WORK/qemu-$QEMU_VERSION" \
+  --entitlements "$ROOT/Resources/QEMU.entitlements" \
   --out "$OUT" \
   --qemu-version "$QEMU_VERSION" \
   --swtpm-version "$(brew list --versions "$SWTPM_FORMULA" | awk '{print $2}')"
@@ -82,7 +85,11 @@ echo "==> Selbsttest"
 for device in virtio-blk-pci nvme virtio-net-pci ramfb qemu-xhci usb-storage tpm-tis-device; do
   grep -q "name \"$device\"" "$WORK/devices.txt" || { echo "Gerät fehlt: $device"; exit 1; }
 done
-"$OUT/bin/qemu-system-aarch64" -machine none -netdev help | grep -q dgram || { echo "netdev dgram fehlt"; exit 1; }
+for netdev in stream vmnet-shared vmnet-host user; do
+  "$OUT/bin/qemu-system-aarch64" -machine none -netdev help | grep -qx "$netdev" || { echo "netdev $netdev fehlt"; exit 1; }
+done
+codesign -d --entitlements - "$OUT/bin/qemu-system-aarch64" 2>/dev/null | grep -q com.apple.security.virtualization \
+  || { echo "QEMU fehlt das Entitlement com.apple.security.virtualization"; exit 1; }
 "$OUT/bin/qemu-system-aarch64" -machine none -accel help | grep -q hvf || { echo "hvf fehlt"; exit 1; }
 du -sh "$OUT"
 echo "==> Fertig: $OUT"

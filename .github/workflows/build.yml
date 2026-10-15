@@ -60,7 +60,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: build/runtime
-          key: runtime-${{ hashFiles('scripts/runtime/**') }}-macos27
+          key: runtime-${{ hashFiles('scripts/runtime/**', 'Resources/QEMU.entitlements') }}-macos27
       - name: Laufzeit bauen
         if: steps.cache.outputs.cache-hit != 'true'
         run: |
@@ -152,6 +152,8 @@ jobs:
             run "F fester Bereich belegt, Ausweg (App)"                --app --subnet 192.168.162.1 --block --quick
             run "G zwei andere VMs laufen (App)"                       --app --subnet 192.168.163.1 --others 2 --quick
             run "H echtes QEMU an der Brücke"                          --subnet 192.168.164.1 --qemu "$QEMU"
+            run "H2 QEMU legt das Netz selbst an (wie UTM)"           --subnet 192.168.165.1 --qemu-vmnet "$QEMU"
+            run "H3 QEMU legt das Netz selbst an, Nur Mac"             --host-only --subnet 192.168.205.1 --qemu-vmnet "$QEMU"
             run "I alte vmnet-Schnittstelle (QEMU vmnet-shared)"       --legacy
             run "J alte vmnet-Schnittstelle, Nur Mac"                  --legacy --host-only
             BIN="$PLAIN"

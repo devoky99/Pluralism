@@ -21,6 +21,7 @@ import PluralismNet
 // --legacy:  nur die alte vmnet-Schnittstelle prüfen, die QEMUs eigene vmnet-Netdevs nutzen
 // --quick:   nur DHCP, ohne Internet- und Lasttests
 // --qemu P:  echtes QEMU (Pfad P) mit dem -netdev-Argument von Pluralism an die Brücke hängen
+// --qemu-vmnet P: echtes QEMU legt das Netz selbst an (-netdev vmnet-shared/-host wie UTM)
 // Ausgabe: eine JSON-Zeile, Exit-Code 0 bei Erfolg.
 
 struct Options {
@@ -35,6 +36,7 @@ struct Options {
     var legacy = false
     var quick = false
     var qemu: String?
+    var qemuVmnet: String?
 }
 
 func parseOptions() -> Options {
@@ -56,6 +58,7 @@ func parseOptions() -> Options {
         case "--legacy": options.legacy = true
         case "--quick": options.quick = true
         case "--qemu": options.qemu = arguments.next()
+        case "--qemu-vmnet": options.qemuVmnet = arguments.next()
         default: break
         }
     }
@@ -178,7 +181,27 @@ func hostUDPSocket(bindPort: UInt16?) -> Int32 {
     return fd
 }
 
-func hostSend(_ fd: Int32, to ip: [UInt8], port: UInt16, _ payload: [UInt8]) -> Bool {
+/// Adressen der Netzwerkschnittstellen des Macs (IPv4) mit Namen.
+func hostInterfaces() -> [String: String] {
+    var result: [String: String] = [:]
+    var list: UnsafeMutablePointer<ifaddrs>?
+    guard getifaddrs(&list) == 0, let first = list else { return result }
+    defer { freeifaddrs(list) }
+    var cursor: UnsafeMutablePointer<ifaddrs>? = first
+    while let entry = cursor {
+        if let address = entry.pointee.ifa_addr, address.pointee.sa_family == sa_family_t(AF_INET) {
+            let ip = address.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { pointer in
+                withUnsafeBytes(of: pointer.pointee.sin_addr.s_addr) { Array($0) }
+            }
+            result[Packets.dotted(ip)] = String(cString: entry.pointee.ifa_name)
+        }
+        cursor = entry.pointee.ifa_next
+    }
+    return result
+}
+
+/// Schickt ein UDP-Paket vom Mac; liefert Erfolg und bei Fehler den Fehlercode.
+func hostSend(_ fd: Int32, to ip: [UInt8], port: UInt16, _ payload: [UInt8]) -> (ok: Bool, error: Int32) {
     var address = socketAddress(ip, port: port)
     let sent = payload.withUnsafeBytes { raw in
         withUnsafePointer(to: &address) {
@@ -187,7 +210,7 @@ func hostSend(_ fd: Int32, to ip: [UInt8], port: UInt16, _ payload: [UInt8]) -> 
             }
         }
     }
-    return sent == payload.count
+    return (sent == payload.count, sent < 0 ? errno : 0)
 }
 
 func hostReceive(_ fd: Int32, timeout: TimeInterval) -> [UInt8]? {
@@ -350,12 +373,14 @@ func runOnce(options: Options, mode: VMNetworkMode, tag: String) -> ([String: An
     // Mac -> VM per UDP
     let probePort = UInt16.random(in: 40000...60000)
     let macSocket = hostUDPSocket(bindPort: nil)
-    let sentToVM = hostSend(macSocket, to: offered, port: probePort, Array("hallo vm".utf8))
+    let sendResult = hostSend(macSocket, to: offered, port: probePort, Array("hallo vm".utf8))
+    let sentToVM = sendResult.ok
     let atVM = guest.wait(timeout: 4) { frame -> Bool? in
         guard let packet = Packets.parseIPv4(frame), let udp = Packets.parseUDP(packet), udp.destinationPort == probePort else { return nil }
         return true
     }
     fields["macToVM"] = sentToVM && atVM == true
+    if !sentToVM { fields["macToVMError"] = "\(sendResult.error): " + String(cString: strerror(sendResult.error)) }
     close(macSocket)
 
     // VM -> Mac per UDP an das Gateway (die Adresse des Macs im VM-Netz)
@@ -372,7 +397,7 @@ func runOnce(options: Options, mode: VMNetworkMode, tag: String) -> ([String: An
     let burstSocket = hostUDPSocket(bindPort: nil)
     let payload = [UInt8](repeating: 0x5A, count: 1400)
     var sent = 0
-    for _ in 0..<2000 where hostSend(burstSocket, to: offered, port: burstPort, payload) {
+    for _ in 0..<2000 where hostSend(burstSocket, to: offered, port: burstPort, payload).ok {
         sent += 1
     }
     close(burstSocket)
@@ -416,7 +441,7 @@ if let qemuPath = options.qemu {
         process.executableURL = URL(fileURLWithPath: qemuPath)
         process.arguments = ["-machine", "virt", "-accel", "tcg", "-cpu", "max", "-m", "256", "-nodefaults",
                              "-display", "none", "-S", "-netdev", netdev,
-                             "-device", "virtio-net-pci,netdev=net0,mac=\(appMAC)"]
+                             "-device", QEMUCommandBuilder.networkDeviceArgument(mac: appMAC)]
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = pipe
@@ -429,10 +454,41 @@ if let qemuPath = options.qemu {
         let output = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
         relay.stop()
         emit(["step": "qemu", "netdev": netdev, "running": running, "connections": connections,
-              "output": String(output.suffix(400))], exitCode: connections >= 1 ? 0 : 9)
+              "output": String(output.suffix(400))], exitCode: connections >= 1 && running ? 0 : 9)
     } catch {
         emit(["step": "qemu", "error": error.localizedDescription], exitCode: 9)
     }
+}
+
+// Echtes QEMU legt das Netz selbst an (wie UTM): startet es, und hat der Mac danach die Gateway-Adresse?
+if let qemuPath = options.qemuVmnet {
+    let hostAddress = options.subnet ?? "192.168.165.1"
+    let parts = hostAddress.split(separator: ".")
+    let addressing = GuestNetworkAddressing(subnet: parts.dropLast().joined(separator: ".") + ".0", prefixLength: 24,
+                                            hostAddress: hostAddress, guestAddress: nil)
+    let netdev = QEMUCommandBuilder.netdevArgument(.vmnet(hostOnly: options.hostOnly, addressing: addressing),
+                                                    restrictToHost: options.hostOnly) ?? ""
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: qemuPath)
+    process.arguments = ["-machine", "virt", "-accel", "tcg", "-cpu", "max", "-m", "256", "-nodefaults",
+                         "-display", "none", "-S", "-netdev", netdev,
+                         "-device", QEMUCommandBuilder.networkDeviceArgument(mac: appMAC)]
+    let pipe = Pipe()
+    process.standardOutput = pipe
+    process.standardError = pipe
+    do {
+        try process.run()
+    } catch {
+        emit(["step": "qemu-vmnet", "error": error.localizedDescription], exitCode: 10)
+    }
+    Thread.sleep(forTimeInterval: 4)
+    let running = process.isRunning
+    let interface = hostInterfaces()[hostAddress]
+    if running { process.terminate() }
+    process.waitUntilExit()
+    let output = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+    emit(["step": "qemu-vmnet", "netdev": netdev, "running": running, "hostInterface": interface ?? "-",
+          "output": String(output.suffix(400))], exitCode: running && interface != nil ? 0 : 10)
 }
 
 // Andere laufende VMs simulieren (mit gestarteter Schnittstelle).

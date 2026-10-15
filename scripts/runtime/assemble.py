@@ -5,7 +5,7 @@
 - kopiert die nötige Firmware nach <out>/share/qemu
 - sammelt alle Bibliotheken außerhalb des Systems (Homebrew) nach <out>/lib und schreibt die
   Ladepfade auf relative Pfade um (@executable_path/../lib, @loader_path)
-- signiert alles ad hoc neu (QEMU mit dem Hypervisor-Entitlement)
+- signiert alles ad hoc neu (QEMU mit Hypervisor- und Virtualization-Entitlement, siehe Resources/QEMU.entitlements)
 - legt Lizenztexte und eine Versionsliste ab (GPL-Pflichten von QEMU)
 
 Danach darf keine Datei mehr auf /opt/homebrew oder /usr/local verweisen.
@@ -115,6 +115,7 @@ def main():
     parser.add_argument("--prefix", required=True, help="Installationsordner von QEMU")
     parser.add_argument("--swtpm", required=True, help="Pfad zum swtpm-Programm")
     parser.add_argument("--qemu-source", required=True, help="Quellordner von QEMU (Lizenzen, Entitlements)")
+    parser.add_argument("--entitlements", default="", help="Entitlements für qemu-system-aarch64")
     parser.add_argument("--out", required=True)
     parser.add_argument("--qemu-version", default="")
     parser.add_argument("--swtpm-version", default="")
@@ -184,7 +185,7 @@ def main():
                 run(["install_name_tool", "-delete_rpath", entry, path], check=False)
 
     # Signieren: erst Bibliotheken, dann Programme
-    entitlements = os.path.join(args.qemu_source, "accel", "hvf", "entitlements.plist")
+    entitlements = args.entitlements or os.path.join(args.qemu_source, "accel", "hvf", "entitlements.plist")
     for path in sorted(rewrites):
         if path.endswith(".dylib") or os.path.dirname(path).endswith("/lib"):
             sign(path)

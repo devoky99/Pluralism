@@ -14,11 +14,16 @@ public struct QEMUToolchain: Equatable, Sendable {
     /// Gerätenamen aus `qemu-system-aarch64 -machine virt -device help`.
     public var devices: Set<String>
     public var version: String?
+    /// Netzwerk-Backends aus `qemu-system-aarch64 -machine none -netdev help`.
+    public var netdevs: Set<String>
+    /// QEMU trägt das Entitlement `com.apple.security.virtualization` (nötig für vmnet ohne Root).
+    public var hasVirtualizationEntitlement: Bool
 
     public init(qemuSystemPath: String, qemuImgPath: String? = nil, swtpmPath: String? = nil,
                 firmwareCodePath: String? = nil, firmwareVarsTemplatePath: String? = nil,
                 secureFirmwareCodePath: String? = nil, secureFirmwareVarsTemplatePath: String? = nil,
-                devices: Set<String> = [], version: String? = nil) {
+                devices: Set<String> = [], version: String? = nil,
+                netdevs: Set<String> = [], hasVirtualizationEntitlement: Bool = false) {
         self.qemuSystemPath = qemuSystemPath
         self.qemuImgPath = qemuImgPath
         self.swtpmPath = swtpmPath
@@ -28,6 +33,15 @@ public struct QEMUToolchain: Equatable, Sendable {
         self.secureFirmwareVarsTemplatePath = secureFirmwareVarsTemplatePath
         self.devices = devices
         self.version = version
+        self.netdevs = netdevs
+        self.hasVirtualizationEntitlement = hasVirtualizationEntitlement
+    }
+
+    /// QEMU kann vmnet selbst ansprechen (`-netdev vmnet-shared`/`vmnet-host`), wie bei UTM.
+    /// Auf macOS 27 genügt dafür das Entitlement `com.apple.security.virtualization`; Root oder das
+    /// nur auf Antrag vergebene `com.apple.vm.networking` sind nicht nötig (geprüft mit pluralism-netcheck).
+    public var supportsNativeVmnet: Bool {
+        hasVirtualizationEntitlement && netdevs.contains("vmnet-shared") && netdevs.contains("vmnet-host")
     }
 
     /// CRB-TPM, das Windows ARM64 auf Apple Silicon zuverlässig erkennt (braucht einen gepatchten QEMU-Build).
@@ -81,6 +95,17 @@ public enum QEMUToolchainLocator {
             let rest = line[start.upperBound...]
             guard let end = rest.firstIndex(of: "\"") else { continue }
             names.insert(String(rest[..<end]))
+        }
+        return names
+    }
+
+    /// Namen aus `-netdev help` (eine Zeile pro Backend nach der Überschrift).
+    public static func parseNetdevHelp(_ output: String) -> Set<String> {
+        var names = Set<String>()
+        for line in output.split(whereSeparator: \.isNewline) {
+            let name = line.trimmingCharacters(in: .whitespaces)
+            guard !name.isEmpty, !name.contains(" "), !name.hasSuffix(":") else { continue }
+            names.insert(name)
         }
         return names
     }

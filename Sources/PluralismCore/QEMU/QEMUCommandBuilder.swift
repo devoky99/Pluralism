@@ -39,6 +39,9 @@ public enum QEMUNetworkBackend: Equatable, Sendable {
     /// und schickt die Ethernet-Rahmen mit Längenfeld, Pluralism reicht sie an vmnet weiter.
     /// Kein Root und kein Apple-Sonderrecht nötig (macOS 26+). Verbindet neu, falls die Brücke neu startet.
     case vmnetRelay(socket: String)
+    /// QEMU spricht vmnet selbst an (`vmnet-shared` bzw. `vmnet-host`), wie bei UTM. Mit Bereich:
+    /// Mac an der ersten Adresse, DHCP für den Rest (die VM bekommt als einziger Gast die zweite).
+    case vmnet(hostOnly: Bool, addressing: GuestNetworkAddressing?)
     /// QEMUs eingebautes Usermode-Netz (Ausweichweg). Langsamer, mit Portweiterleitungen auf 127.0.0.1.
     case user(forwards: [PortForward])
 }
@@ -66,6 +69,12 @@ public struct QEMULaunchPlan: Equatable, Sendable {
 /// - Isolation: kein Agentenkanal (virtio-serial/vdagent), keine Ordnerfreigabe (9p),
 ///   nur Netzwerk und Peripherie
 public enum QEMUCommandBuilder {
+    /// Netzwerkkarte. `romfile=` schaltet das PXE-Boot-ROM ab: Die UEFI-Firmware bringt einen eigenen
+    /// virtio-net-Treiber mit, und ohne die Datei `efi-virtio.rom` würde QEMU sonst gar nicht starten.
+    public static func networkDeviceArgument(mac: String) -> String {
+        "virtio-net-pci,netdev=net0,mac=\(mac),romfile="
+    }
+
     /// Wert für `-netdev` (Kennung `net0`), nil ohne Netzwerkkarte.
     public static func netdevArgument(_ backend: QEMUNetworkBackend, restrictToHost: Bool) -> String? {
         switch backend {
@@ -73,6 +82,13 @@ public enum QEMUCommandBuilder {
             return nil
         case .vmnetRelay(let socket):
             return "stream,id=net0,server=off,addr.type=unix,addr.path=\(escape(socket)),reconnect-ms=1000"
+        case .vmnet(let hostOnly, let addressing):
+            var netdev = hostOnly ? "vmnet-host,id=net0" : "vmnet-shared,id=net0"
+            if let addressing {
+                netdev += ",start-address=\(addressing.hostAddress),end-address=\(addressing.lastHostAddress)"
+                netdev += ",subnet-mask=\(addressing.subnetMask)"
+            }
+            return netdev
         case .user(let forwards):
             var netdev = "user,id=net0"
             if restrictToHost {
@@ -196,7 +212,7 @@ public enum QEMUCommandBuilder {
             args += ["-netdev", netdev]
         }
         if backend != .none {
-            args += ["-device", "virtio-net-pci,netdev=net0,mac=\(config.network.macAddress)"]
+            args += ["-device", networkDeviceArgument(mac: config.network.macAddress)]
         }
 
         // Ton (QEMUs CoreAudio-Ausgabe; ein Mikrofon unterstützt sie nicht)

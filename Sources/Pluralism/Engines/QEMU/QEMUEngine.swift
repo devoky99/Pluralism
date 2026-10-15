@@ -40,6 +40,10 @@ final class QEMUEngine: VMEngine {
     private var launchFlag = CancellationFlag()
     private var usesIntegratedDisplay = true
     private var stopRequestedByUser = false
+    /// Der laufende Start lässt QEMU vmnet selbst ansprechen (wie UTM).
+    private var launchUsesNativeVmnet = false
+    /// QEMUs eigenes vmnet ist gescheitert; bis zum Neustart der App nutzt diese VM die Paketbrücke.
+    private var nativeVmnetFailed = false
 
     init(bundle: VMBundle, config: VMConfiguration, toolchainProvider: @escaping () -> QEMUToolchain?) {
         self.bundle = bundle
@@ -64,6 +68,7 @@ final class QEMUEngine: VMEngine {
         let runtime: RuntimePaths
         let toolchain: QEMUToolchain
         let media: QEMUMedia
+        let nativeVmnet: Bool
     }
 
     private struct Prepared: Sendable {
@@ -92,8 +97,11 @@ final class QEMUEngine: VMEngine {
         launchGeneration += 1
         let flag = CancellationFlag()
         launchFlag = flag
+        let nativeVmnet = toolchain.supportsNativeVmnet && !nativeVmnetFailed && config.network.mode != .none
+        launchUsesNativeVmnet = nativeVmnet
         let launch = Launch(generation: launchGeneration, flag: flag, config: config, bundle: bundle,
-                            runtime: runtime, toolchain: toolchain, media: makeMedia(config: config, bundle: bundle))
+                            runtime: runtime, toolchain: toolchain, media: makeMedia(config: config, bundle: bundle),
+                            nativeVmnet: nativeVmnet)
         Task {
             await run(launch)
         }
@@ -118,7 +126,8 @@ final class QEMUEngine: VMEngine {
             let prepared = try await Background.runThrowing {
                 try QEMUEngine.prepare(config: launch.config, bundle: launch.bundle, toolchain: launch.toolchain,
                                        runtime: launch.runtime)
-                let network = QEMUEngine.setupNetwork(config: launch.config, runtime: launch.runtime) { address in
+                let network = QEMUEngine.setupNetwork(config: launch.config, runtime: launch.runtime,
+                                                      nativeVmnet: launch.nativeVmnet) { address in
                     MainQueue.async { addressDetected(address) }
                 }
                 do {
@@ -273,14 +282,22 @@ final class QEMUEngine: VMEngine {
         onNetworkChange?()
     }
 
-    /// Baut das vmnet-Netz und die Paketbrücke auf. Fällt bei Problemen auf das Usermode-Netz zurück.
-    private nonisolated static func setupNetwork(config: VMConfiguration, runtime: RuntimePaths,
+    /// Wählt die Netzanbindung:
+    /// 1. QEMU spricht vmnet selbst an (`vmnet-shared`/`vmnet-host` mit festem Bereich), wie UTM.
+    /// 2. Sonst die Paketbrücke von Pluralism (vmnet-Netz in Pluralism, QEMU per `-netdev stream`).
+    /// 3. Geht auch das nicht, QEMUs Usermode-Netz.
+    private nonisolated static func setupNetwork(config: VMConfiguration, runtime: RuntimePaths, nativeVmnet: Bool,
                                                  onGuestAddress: @escaping @Sendable (String) -> Void) -> NetworkSetup {
         let fallbackForwards = QEMUCommandBuilder.allPortForwards(config)
         switch config.network.mode {
         case .none:
             return NetworkSetup(backend: .none, relay: nil, active: .none, notice: nil)
         case .nat, .hostOnly:
+            if nativeVmnet {
+                let planned = FixedSubnet.addressing(slot: config.network.slot, mode: config.network.mode)
+                return NetworkSetup(backend: .vmnet(hostOnly: config.network.mode == .hostOnly, addressing: planned),
+                                    relay: nil, active: .vmnet(planned), notice: nil)
+            }
             let mode: VMNetworkMode = config.network.mode == .nat ? .shared : .hostOnly
             do {
                 let (network, fixedNotice) = try VMNetworkRegistry.shared.acquire(
@@ -350,6 +367,15 @@ final class QEMUEngine: VMEngine {
         guard generation == launchGeneration else { return }
         let wasStopping = state == .stopping || stopRequestedByUser
         let logHint = QEMUEngine.lastLogLines(bundle.engineLogURL)
+        // QEMU konnte vmnet nicht selbst anlegen (z. B. Bereich belegt): neuer Versuch mit der Paketbrücke.
+        if launchUsesNativeVmnet, state == .starting, !wasStopping, logHint.localizedCaseInsensitiveContains("vmnet") {
+            nativeVmnetFailed = true
+            teardown()
+            state = .stopped
+            onNotice?("QEMU konnte das Netz nicht selbst anlegen. Pluralism nutzt für diese VM die eigene Paketbrücke.\n\n" + logHint)
+            start()
+            return
+        }
         teardown()
         if status == 0 || wasStopping {
             state = .stopped

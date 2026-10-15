@@ -5,5 +5,9 @@
 	<!-- QEMU nutzt Apples Hypervisor.framework (-accel hvf). Funktioniert mit Ad-hoc-Signatur. -->
 	<key>com.apple.security.hypervisor</key>
 	<true/>
+	<!-- vmnet ohne Root (-netdev vmnet-shared/vmnet-host). Auf macOS 27 genügt dieses Entitlement,
+	     das nur auf Antrag vergebene com.apple.vm.networking ist nicht nötig (pluralism-netcheck). -->
+	<key>com.apple.security.virtualization</key>
+	<true/>
 </dict>
 </plist>
