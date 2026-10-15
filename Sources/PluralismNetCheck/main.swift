@@ -16,7 +16,8 @@ import PluralismNet
 
 struct Options {
     var hostOnly = false
-    var plain = false
+    var setSubnet = true
+    var reserve = true
     var index = 150
     var timeout: TimeInterval = 6
 }
@@ -29,7 +30,12 @@ func parseOptions() -> Options {
         case "--host-only":
             options.hostOnly = true
         case "--plain":
-            options.plain = true
+            options.setSubnet = false
+            options.reserve = false
+        case "--no-subnet":
+            options.setSubnet = false
+        case "--no-reservation":
+            options.reserve = false
         case "--index":
             if let value = arguments.next(), let index = Int(value) { options.index = index }
         case "--timeout":
@@ -75,7 +81,7 @@ FileHandle.standardError.write("Netz \(addressing.subnet)/24 für \(mac) anlegen
 let network: VMNetwork
 do {
     network = try VMNetwork(mode: options.hostOnly ? .hostOnly : .shared, addressing: addressing, guestMAC: mac,
-                            customize: !options.plain)
+                            setSubnet: options.setSubnet, reserveAddress: options.reserve)
 } catch {
     report(["step": "network", "error": error.localizedDescription], exitCode: 2)
 }
@@ -133,7 +139,7 @@ let details: [String: Any] = [
 guard let offer else {
     report(details.merging(["step": "dhcp", "error": "keine DHCP-Antwort"]) { $1 }, exitCode: 5)
 }
-let matches = options.plain || offer.yourAddress == addressing.guestAddress
+let matches = !options.reserve || offer.yourAddress == addressing.guestAddress
 report(details.merging([
     "step": "done",
     "offer": offer.yourAddress,

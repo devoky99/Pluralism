@@ -65,9 +65,11 @@ public final class VMNetwork {
     public let addressing: GuestNetworkAddressing
     public let mode: VMNetworkMode
 
-    /// - Parameter customize: false lässt Adressbereich und DHCP-Reservierung weg (vmnet-Standard),
-    ///   nur für Diagnosen.
-    public init(mode: VMNetworkMode, addressing: GuestNetworkAddressing, guestMAC: String, customize: Bool = true) throws {
+    /// - Parameters:
+    ///   - setSubnet: eigenen Adressbereich setzen (sonst wählt vmnet selbst, meist 192.168.64.0/24)
+    ///   - reserveAddress: feste Gast-Adresse per DHCP-Reservierung
+    public init(mode: VMNetworkMode, addressing: GuestNetworkAddressing, guestMAC: String,
+                setSubnet: Bool = true, reserveAddress: Bool = true) throws {
         guard let macBytes = MACAddress.bytes(guestMAC) else {
             throw VMNetworkError.invalidMAC(guestMAC)
         }
@@ -81,14 +83,15 @@ public final class VMNetwork {
             throw VMNetworkError.vmnet("Netzkonfiguration anlegen", Int(status.rawValue))
         }
 
-        if customize {
+        if setSubnet {
             var subnet = try VMNetwork.address(addressing.subnet)
             var mask = try VMNetwork.address(addressing.mask)
             status = vmnet_network_configuration_set_ipv4_subnet(configuration, &subnet, &mask)
             guard status == .VMNET_SUCCESS else {
                 throw VMNetworkError.vmnet("Adressbereich \(addressing.subnet)/24 setzen", Int(status.rawValue))
             }
-
+        }
+        if reserveAddress {
             var guestAddress = try VMNetwork.address(addressing.guestAddress)
             var mac = ether_addr_t(octet: (macBytes[0], macBytes[1], macBytes[2], macBytes[3], macBytes[4], macBytes[5]))
             status = vmnet_network_configuration_add_dhcp_reservation(configuration, &mac, &guestAddress)

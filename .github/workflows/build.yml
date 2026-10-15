@@ -140,13 +140,16 @@ jobs:
           cp "$SRC" "$SIGNED"
           codesign --force --sign - --timestamp=none --entitlements Resources/Pluralism.entitlements "$SIGNED"
           {
-            for BIN in "$SIGNED" "$PLAIN"; do
-              echo "### $(basename "$BIN")"
-              codesign -d --entitlements - "$BIN" 2>/dev/null | grep -o "com.apple.security.[a-z.-]*" | tr '\n' ' '; echo
-              echo "## shared, eigenes Netz";   "$BIN" --index 150 || echo "exit=$?"
-              echo "## shared, Standard";       "$BIN" --plain --index 152 || echo "exit=$?"
-              echo "## host-only, eigenes Netz"; "$BIN" --host-only --index 151 || echo "exit=$?"
-            done
+            BIN="$SIGNED"
+            codesign -d --entitlements - "$BIN" 2>/dev/null | grep -o "com.apple.security.[a-z.-]*" | tr '\n' ' '; echo
+            echo "## A shared, Standard";                         "$BIN" --plain --index 140 || echo "exit=$?"
+            echo "## B shared, nur Reservierung 64.2";            "$BIN" --no-subnet --index 64 || echo "exit=$?"
+            echo "## C shared, nur Adressbereich 120";            "$BIN" --no-reservation --index 120 || echo "exit=$?"
+            echo "## D shared, Adressbereich 66 + Reservierung";  "$BIN" --index 66 || echo "exit=$?"
+            echo "## E shared, Adressbereich 120 + Reservierung"; "$BIN" --index 120 || echo "exit=$?"
+            echo "## F host-only, Standard";                      "$BIN" --host-only --plain --index 142 || echo "exit=$?"
+            echo "## G host-only, nur Reservierung 64.2";         "$BIN" --host-only --no-subnet --index 64 || echo "exit=$?"
+            echo "## H ohne Entitlement";                         "$PLAIN" --plain --index 144 || echo "exit=$?"
           } 2>&1 | tee "$RUNNER_TEMP/logs/25-netcheck.log"
       - name: App-Bundle bauen und signieren
         run: |
