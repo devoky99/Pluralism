@@ -206,6 +206,20 @@ struct VMSettingsView: View {
                 Toggle("Mikrofon", isOn: $draft.peripherals.audioInput)
                 Toggle("Systemkürzel an den Gast (z. B. Cmd+Tab)", isOn: $draft.peripherals.captureSystemKeys)
             }
+            LabeledContent("Scrollgeschwindigkeit") {
+                HStack {
+                    Slider(value: $draft.peripherals.scrollSpeed, in: PeripheralSettings.scrollSpeedRange, step: 0.25)
+                        .frame(maxWidth: 220)
+                    Text(String(format: "%.2f×", draft.peripherals.scrollSpeed))
+                        .monospacedDigit()
+                        .frame(width: 48, alignment: .trailing)
+                }
+            }
+            Toggle("Nachlauf nach dem Loslassen (Schwung)", isOn: $draft.peripherals.scrollMomentum)
+            Toggle("Scrollrichtung umkehren", isOn: $draft.peripherals.invertScroll)
+            Hint(draft.engine == .qemu
+                 ? "QEMU kennt nur Mausrad-Schritte (je drei Zeilen), kein stufenloses Scrollen. 1× heißt: Der Inhalt folgt ungefähr den Fingern. Waagrecht scrollt Pluralism mit Umschalt + Mausrad. Stufenlos scrollt Windows über Remote Desktop."
+                 : "Linux bekommt vom Trackpad Mausrad-Schritte; je nach Programm wirkt das zu schnell oder zu langsam. Hier lässt es sich anpassen.")
             Hint("Die VM ist isoliert: keine Zwischenablage, keine geteilten Ordner, kein Kanal zum Mac.")
         }
     }

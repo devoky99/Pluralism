@@ -25,6 +25,7 @@ final class AppleVMEngine: NSObject, VMEngine, VZVirtualMachineDelegate {
     private var virtualMachine: VZVirtualMachine?
     private var vzConfiguration: VZVirtualMachineConfiguration?
     private weak var displayView: VZVirtualMachineView?
+    private weak var scrollTuningView: ScrollTuningView?
     /// Das vmnet-Netz muss leben, solange die VM läuft.
     private var network: VMNetwork?
     private(set) var activeNetwork: ActiveNetwork = .none
@@ -37,6 +38,7 @@ final class AppleVMEngine: NSObject, VMEngine, VZVirtualMachineDelegate {
 
     func update(configuration: VMConfiguration) {
         config = configuration
+        scrollTuningView?.settings = configuration.peripherals.scrollSettings
     }
 
     var hasSavedState: Bool {
@@ -229,7 +231,9 @@ final class AppleVMEngine: NSObject, VMEngine, VZVirtualMachineDelegate {
         view.automaticallyReconfiguresDisplay = config.display.autoResize
         view.virtualMachine = virtualMachine
         displayView = view
-        return view
+        let tuning = ScrollTuningView(content: view, settings: config.peripherals.scrollSettings)
+        scrollTuningView = tuning
+        return tuning
     }
 
     var displayHint: String? { nil }

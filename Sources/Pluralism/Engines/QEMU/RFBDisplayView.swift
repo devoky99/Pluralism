@@ -18,8 +18,9 @@ final class RFBDisplayView: NSView {
     private var commandUsedWithOtherKey = false
     private var pressedScancodes: [UInt32: UInt32] = [:]   // Scancode -> Keysym
     private var trackingArea: NSTrackingArea?
-    private var scrollAccumulatorY: CGFloat = 0
-    private var scrollAccumulatorX: CGFloat = 0
+    private var scroll = ScrollTranslator()
+    /// Scroll-Einstellungen der VM (Geschwindigkeit, Schwung, Richtung).
+    var scrollSettings = ScrollTranslator.Settings()
     /// Letztes Bild der VM. AppKit setzt es in updateLayer() als Inhalt der Ebene.
     private var currentImage: CGImage?
 
@@ -178,24 +179,46 @@ final class RFBDisplayView: NSView {
     override func rightMouseDragged(with event: NSEvent) { sendPointer(event) }
     override func otherMouseDragged(with event: NSEvent) { sendPointer(event) }
 
+    /// QEMU kennt nur Rastschritte eines Mausrads. `ScrollTranslator` rechnet die Trackpad-Bewegung so um,
+    /// dass der Inhalt im Gast ungefähr den Fingern folgt (vorher war es etwa viermal zu schnell).
     override func scrollWheel(with event: NSEvent) {
-        let step: CGFloat = event.hasPreciseScrollingDeltas ? 12 : 1
-        scrollAccumulatorY += event.scrollingDeltaY
-        scrollAccumulatorX += event.scrollingDeltaX
-        while abs(scrollAccumulatorY) >= step {
-            let up = scrollAccumulatorY > 0
-            clickWheel(up ? RFBButton.wheelUp : RFBButton.wheelDown, event: event)
-            scrollAccumulatorY += up ? -step : step
+        let phase: ScrollTranslator.Phase
+        if !event.hasPreciseScrollingDeltas {
+            phase = .wheel
+        } else if !event.momentumPhase.isEmpty {
+            phase = .momentum
+        } else if event.phase.contains(.began) || event.phase.contains(.mayBegin) {
+            phase = .began
+        } else if event.phase.contains(.ended) || event.phase.contains(.cancelled) {
+            phase = .ended
+        } else {
+            phase = .changed
         }
-        while abs(scrollAccumulatorX) >= step {
-            let left = scrollAccumulatorX > 0
-            clickWheel(left ? RFBButton.wheelLeft : RFBButton.wheelRight, event: event)
-            scrollAccumulatorX += left ? -step : step
+        let steps = scroll.translate(deltaX: Double(event.scrollingDeltaX), deltaY: Double(event.scrollingDeltaY),
+                                     phase: phase, guestPixelsPerPoint: guestPixelsPerPoint(), settings: scrollSettings)
+        guard !steps.isEmpty else { return }
+        for _ in 0..<abs(steps.vertical) {
+            clickWheel(steps.vertical > 0 ? RFBButton.wheelUp : RFBButton.wheelDown, event: event)
         }
-        if event.phase == .ended || event.momentumPhase == .ended {
-            scrollAccumulatorX = 0
-            scrollAccumulatorY = 0
+        if steps.horizontal != 0 {
+            // QEMUs USB-Tablet hat nur ein senkrechtes Rad. Windows und Linux scrollen mit Umschalt + Rad waagrecht.
+            let shiftScancode: UInt32 = 0x2A
+            let shiftKeysym: UInt32 = 0xFFE1
+            let shiftHeld = pressedScancodes[shiftScancode] != nil
+            if !shiftHeld { connection?.sendKey(down: true, keysym: shiftKeysym, scancode: shiftScancode) }
+            for _ in 0..<abs(steps.horizontal) {
+                clickWheel(steps.horizontal > 0 ? RFBButton.wheelUp : RFBButton.wheelDown, event: event)
+            }
+            if !shiftHeld { connection?.sendKey(down: false, keysym: shiftKeysym, scancode: shiftScancode) }
         }
+    }
+
+    /// Pixel des Gastbildschirms pro Punkt im Fenster.
+    private func guestPixelsPerPoint() -> Double {
+        guard let size = connection?.currentSize(), size.width > 0 else { return 1 }
+        let rect = imageRect()
+        guard rect.width > 0 else { return 1 }
+        return Double(CGFloat(size.width) / rect.width)
     }
 
     private func clickWheel(_ button: UInt8, event: NSEvent) {

@@ -378,11 +378,23 @@ public struct PeripheralSettings: Codable, Equatable, Sendable {
     public var audioInput: Bool
     /// Tastenkürzel wie Cmd+Tab an den Gast weiterreichen (Apple-Engine).
     public var captureSystemKeys: Bool
+    /// Scrollgeschwindigkeit im Gast (1 = Inhalt folgt den Fingern), 0,25 bis 3.
+    public var scrollSpeed: Double
+    /// Nachlauf nach dem Loslassen des Trackpads an den Gast weitergeben.
+    public var scrollMomentum: Bool
+    /// Scrollrichtung umkehren.
+    public var invertScroll: Bool
 
-    public init(audioOutput: Bool = true, audioInput: Bool = false, captureSystemKeys: Bool = false) {
+    public static let scrollSpeedRange: ClosedRange<Double> = 0.25...3
+
+    public init(audioOutput: Bool = true, audioInput: Bool = false, captureSystemKeys: Bool = false,
+                scrollSpeed: Double = 1, scrollMomentum: Bool = true, invertScroll: Bool = false) {
         self.audioOutput = audioOutput
         self.audioInput = audioInput
         self.captureSystemKeys = captureSystemKeys
+        self.scrollSpeed = scrollSpeed
+        self.scrollMomentum = scrollMomentum
+        self.invertScroll = invertScroll
     }
 
     public init(from decoder: Decoder) throws {
@@ -391,6 +403,15 @@ public struct PeripheralSettings: Codable, Equatable, Sendable {
         audioOutput = try c.decode(.audioOutput, default: d.audioOutput)
         audioInput = try c.decode(.audioInput, default: d.audioInput)
         captureSystemKeys = try c.decode(.captureSystemKeys, default: d.captureSystemKeys)
+        let speed = try c.decode(.scrollSpeed, default: d.scrollSpeed)
+        scrollSpeed = min(max(speed, PeripheralSettings.scrollSpeedRange.lowerBound), PeripheralSettings.scrollSpeedRange.upperBound)
+        scrollMomentum = try c.decode(.scrollMomentum, default: d.scrollMomentum)
+        invertScroll = try c.decode(.invertScroll, default: d.invertScroll)
+    }
+
+    /// Einstellungen für `ScrollTranslator`.
+    public var scrollSettings: ScrollTranslator.Settings {
+        ScrollTranslator.Settings(speed: scrollSpeed, momentum: scrollMomentum, invert: invertScroll)
     }
 }
 

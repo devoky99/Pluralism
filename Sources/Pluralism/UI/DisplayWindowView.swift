@@ -94,6 +94,30 @@ struct DisplayContent: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    /// Scrollen im laufenden Betrieb einstellen (wirkt sofort, wird in der VM gespeichert).
+    private var scrollMenu: some View {
+        let peripherals = session.configuration.peripherals
+        return Menu {
+            Picker("Geschwindigkeit", selection: Binding(
+                get: { peripherals.scrollSpeed },
+                set: { session.updateScrolling(speed: $0) })) {
+                ForEach([0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3], id: \.self) { speed in
+                    Text(String(format: "%.2f×", speed)).tag(speed)
+                }
+            }
+            .pickerStyle(.inline)
+            Toggle("Nachlauf (Schwung)", isOn: Binding(
+                get: { peripherals.scrollMomentum },
+                set: { session.updateScrolling(momentum: $0) }))
+            Toggle("Richtung umkehren", isOn: Binding(
+                get: { peripherals.invertScroll },
+                set: { session.updateScrolling(invert: $0) }))
+        } label: {
+            Label("Scrollen", systemImage: "scroll")
+        }
+        .help("Scrollgeschwindigkeit, Nachlauf und Richtung für diese VM")
+    }
+
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
         ToolbarItemGroup(placement: .automatic) {
@@ -103,6 +127,9 @@ struct DisplayContent: View {
             } else if session.state == .paused {
                 Button { session.resume() } label: { Label("Fortsetzen", systemImage: "play.fill") }
                     .help("Fortsetzen")
+            }
+            if session.state.isActive {
+                scrollMenu
             }
             if session.configuration.engine == .qemu && session.state == .running {
                 Button { session.engine.sendCtrlAltDelete() } label: {

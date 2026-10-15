@@ -55,6 +55,7 @@ final class QEMUEngine: VMEngine {
     func update(configuration: VMConfiguration) {
         config = configuration
         runtime = RuntimePaths(config: configuration, userID: getuid())
+        displayView?.scrollSettings = configuration.peripherals.scrollSettings
     }
 
     // MARK: Start
@@ -471,6 +472,7 @@ final class QEMUEngine: VMEngine {
     func makeDisplayView() -> NSView? {
         guard config.display.qemuFrontend == .integrated else { return nil }
         let view = RFBDisplayView(frame: NSRect(x: 0, y: 0, width: 1024, height: 768))
+        view.scrollSettings = config.peripherals.scrollSettings
         if let rfb {
             view.attach(rfb)
         }

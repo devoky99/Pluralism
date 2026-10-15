@@ -144,6 +144,26 @@ final class VMSession: ObservableObject, Identifiable {
         objectWillChange.send()
     }
 
+    /// Scrollverhalten ändern, auch während die VM läuft. Wirkt sofort.
+    func updateScrolling(speed: Double? = nil, momentum: Bool? = nil, invert: Bool? = nil) {
+        var updated = configuration
+        if let speed {
+            let range = PeripheralSettings.scrollSpeedRange
+            updated.peripherals.scrollSpeed = min(max(speed, range.lowerBound), range.upperBound)
+        }
+        if let momentum { updated.peripherals.scrollMomentum = momentum }
+        if let invert { updated.peripherals.invertScroll = invert }
+        guard updated != configuration else { return }
+        do {
+            try bundle.save(updated)
+        } catch {
+            notice = "Scroll-Einstellung nicht gespeichert: \(error.localizedDescription)"
+        }
+        configuration = updated
+        engine.update(configuration: updated)
+        onConfigurationSaved?(updated)
+    }
+
     /// Neue Konfiguration speichern (nur ausgeschaltet).
     func apply(_ newConfiguration: VMConfiguration) throws {
         guard state.isStopped else {
