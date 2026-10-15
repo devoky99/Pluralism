@@ -181,6 +181,9 @@ struct VMDetailView: View {
 
     private var diskDescription: String {
         var text = "\(config.disk.sizeGiB) GB, \(config.disk.format.displayName)"
+        if config.engine == .qemu {
+            text += ", \(config.guestOS == .windows ? config.disk.bus.displayName : DiskBus.virtio.displayName)"
+        }
         if let used = DiskImageService.allocatedBytes(of: session.bundle.diskURL(for: config)) {
             text += ", belegt \(Format.bytes(used))"
         }
@@ -188,14 +191,29 @@ struct VMDetailView: View {
     }
 
     private var networkDescription: String {
-        guard config.network.mode == .nat else { return config.network.mode.displayName }
-        var text = "\(config.network.mode.displayName), MAC \(config.network.macAddress)"
-        let forwards = QEMUCommandBuilder.allPortForwards(config)
-        if config.engine == .qemu && !forwards.isEmpty {
-            let list = forwards.map { "\($0.hostPort)→\($0.guestPort)" }.joined(separator: ", ")
-            text += ", Ports \(list)"
+        guard config.network.mode != .none else { return config.network.mode.displayName }
+        var text = config.network.mode.displayName
+        if let addressing = config.network.addressing {
+            text += ", Adresse \(addressing.guestAddress)"
+        }
+        if session.state.isActive {
+            switch session.engine.activeNetwork {
+            case .vmnet: text += " (schnelles Netz)"
+            case .fallback: text += " (Ausweich-Netz)"
+            case .none: break
+            }
         }
         return text
+    }
+
+    /// Ziel für Remote Desktop: im schnellen Netz direkt die VM, sonst die Weiterleitung auf localhost.
+    private var remoteDesktopTarget: String? {
+        guard let port = config.windows.rdpHostPort else { return nil }
+        switch session.engine.activeNetwork {
+        case .vmnet(let addressing): return addressing.guestAddress
+        case .fallback: return "localhost:\(port)"
+        case .none: return config.network.addressing?.guestAddress ?? "localhost:\(port)"
+        }
     }
 
     private var displayDescription: String {
@@ -297,11 +315,11 @@ struct VMDetailView: View {
     private var windowsSection: some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 10) {
-                if let port = config.windows.rdpHostPort {
+                if let target = remoteDesktopTarget {
                     HStack {
-                        Text("Remote Desktop über localhost:\(String(port))")
+                        Text("Remote Desktop über \(target)")
                         Spacer()
-                        Button("RDP-Verbindung öffnen") { openRemoteDesktop(port: port) }
+                        Button("RDP-Verbindung öffnen") { openRemoteDesktop(target: target) }
                             .disabled(session.state != .running)
                     }
                     Hint("Für die „Windows App“ von Microsoft. Die Verbindungsdatei schaltet Zwischenablage, Laufwerke und Geräte-Umleitung aus, die VM bleibt isoliert. Remote Desktop braucht Windows 11 Pro.")
@@ -314,6 +332,7 @@ struct VMDetailView: View {
                 if session.state == .running {
                     Button("Strg+Alt+Entf senden") { session.engine.sendCtrlAltDelete() }
                 }
+                diskMigrationControls
                 Hint("Andere Auflösungen: im Gast den virtio-gpu-Treiber (viogpudo) installieren, VM ausschalten und in den Einstellungen unter Anzeige auf virtio-gpu umstellen.")
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -323,10 +342,43 @@ struct VMDetailView: View {
         }
     }
 
-    private func openRemoteDesktop(port: Int) {
+    @ViewBuilder
+    private var diskMigrationControls: some View {
+        switch (config.disk.bus, config.disk.migration) {
+        case (.nvme, nil):
+            HStack {
+                Text("Systemplatte: NVMe (langsamer)")
+                Spacer()
+                Button("Auf schnelle Platte umstellen") {
+                    do {
+                        try session.beginVirtioMigration()
+                    } catch {
+                        model.show(error, title: "Umstellung nicht möglich")
+                    }
+                }
+                .disabled(isActive)
+            }
+            Hint("Stellt die Systemplatte in zwei Schritten auf virtio um. Vorher legt Pluralism automatisch einen Snapshot an.")
+        case (.nvme, .driverPending?):
+            HStack {
+                Text("Umstellung Schritt 1: Windows einmal mindestens zwei Minuten laufen lassen und herunterfahren.")
+                Spacer()
+                Button("Abbrechen") {
+                    try? session.cancelVirtioMigration()
+                }
+                .disabled(isActive)
+            }
+        case (_, .readyToSwitch?):
+            Text("Umstellung Schritt 2: Beim nächsten Start läuft die Systemplatte über virtio.")
+        default:
+            EmptyView()
+        }
+    }
+
+    private func openRemoteDesktop(target: String) {
         let user = config.windows.unattend.userName
         var lines = [
-            "full address:s:localhost:\(port)",
+            "full address:s:\(target)",
             "prompt for credentials:i:1",
             "screen mode id:i:1",
             "dynamic resolution:i:1",

@@ -31,6 +31,17 @@ public struct QEMUMedia: Equatable, Sendable {
     }
 }
 
+/// Wie die Netzwerkkarte einer QEMU-VM nach außen angebunden ist.
+public enum QEMUNetworkBackend: Equatable, Sendable {
+    /// Keine Netzwerkkarte.
+    case none
+    /// Paketbrücke zu Apples vmnet: QEMU schickt Ethernet-Rahmen über einen Datagramm-Socket
+    /// an Pluralism, Pluralism reicht sie an vmnet weiter. Schnell, kein Root nötig (macOS 26+).
+    case vmnetRelay(guestSocket: String, hostSocket: String)
+    /// QEMUs eingebautes Usermode-Netz (Ausweichweg). Langsamer, mit Portweiterleitungen auf 127.0.0.1.
+    case user(forwards: [PortForward])
+}
+
 public struct QEMULaunchPlan: Equatable, Sendable {
     public var qemu: ProcessPlan
     /// swtpm muss vor QEMU laufen, wenn ein TPM gewünscht ist.
@@ -45,10 +56,11 @@ public struct QEMULaunchPlan: Equatable, Sendable {
 /// das normale QEMU aus Homebrew (siehe docs/research/windows-arm-guests.md, Abschnitt 6):
 /// - `virt`-Maschine mit GICv3, Beschleunigung über Hypervisor.framework (`-accel hvf`)
 /// - UEFI (edk2) mit eigener Variablen-Datei pro VM
-/// - Systemplatte als NVMe (Windows hat dafür einen eingebauten Treiber)
+/// - Systemplatte als virtio-blk mit eigenem I/O-Thread (schnell) oder als NVMe
+///   (Windows kennt NVMe ohne Treiber, für ältere Installationen)
 /// - ISOs als USB-Massenspeicher (funktioniert im Windows-Setup ohne Treiber)
 /// - USB-Tastatur und USB-Tablet (absolute Mauskoordinaten)
-/// - virtio-net (Treiber NetKVM kommt per Antwortdatei aus dem virtio-win-ISO)
+/// - virtio-net über eine Paketbrücke zu Apples vmnet (Treiber NetKVM kommt per Setup-Medium)
 /// - QMP-Socket zur Steuerung, VNC-Socket für die Anzeige im Pluralism-Fenster
 /// - Isolation: kein Agentenkanal (virtio-serial/vdagent), keine Ordnerfreigabe (9p),
 ///   nur Netzwerk und Peripherie
@@ -57,7 +69,8 @@ public enum QEMUCommandBuilder {
                                 bundle: VMBundle,
                                 toolchain: QEMUToolchain,
                                 runtime: RuntimePaths,
-                                media: QEMUMedia) throws -> QEMULaunchPlan {
+                                media: QEMUMedia,
+                                network: QEMUNetworkBackend? = nil) throws -> QEMULaunchPlan {
         guard runtime.allSocketPathsFit else {
             throw QEMUPlanError.socketPathTooLong(runtime.directory.path)
         }
@@ -112,15 +125,30 @@ public enum QEMUCommandBuilder {
 
         // Systemplatte
         let diskFormat = config.disk.format == .qcow2 ? "qcow2" : "raw"
-        var drive = "if=none,id=system,format=\(diskFormat),file=\(escape(bundle.diskURL(for: config).path)),discard=unmap,detect-zeroes=unmap"
-        if config.disk.syncMode == .none {
-            drive += ",cache=unsafe"
+        var drive = "if=none,id=system,format=\(diskFormat),file=\(escape(bundle.diskURL(for: config).path)),discard=unmap,detect-zeroes=unmap,aio=threads"
+        switch config.disk.syncMode {
+        case .none: drive += ",cache=unsafe"
+        case .full: drive += ",cache=writethrough"
+        case .fsync: drive += ",cache=writeback"
         }
         args += ["-drive", drive]
-        if isWindows {
+        let bus: DiskBus = isWindows ? config.disk.bus : .virtio
+        let queues = min(max(1, cores), 16)
+        let needsIOThread = bus == .virtio || config.disk.migration == .driverPending
+        if needsIOThread {
+            // Eigener Ein-/Ausgabe-Thread: Plattenzugriffe laufen neben den vCPUs statt im Hauptthread von QEMU.
+            args += ["-object", "iothread,id=iothread0"]
+        }
+        switch bus {
+        case .virtio:
+            args += ["-device", "virtio-blk-pci,drive=system,iothread=iothread0,num-queues=\(queues),bootindex=1"]
+        case .nvme:
             args += ["-device", "nvme,drive=system,serial=pluralism0,bootindex=1"]
-        } else {
-            args += ["-device", "virtio-blk-pci,drive=system,bootindex=1"]
+        }
+        // Umstellung NVMe -> virtio: kleine Hilfsplatte, damit Windows den Treiber viostor einbindet.
+        if isWindows && bus == .nvme && config.disk.migration == .driverPending {
+            args += ["-drive", "if=none,id=helper,format=raw,file=\(escape(bundle.virtioHelperDiskURL.path))"]
+            args += ["-device", "virtio-blk-pci,drive=helper,iothread=iothread0"]
         }
 
         // Wechselmedien als USB-Massenspeicher
@@ -142,13 +170,24 @@ public enum QEMUCommandBuilder {
             addCD(id: "unattend", path: unattend, bootIndex: nil)
         }
 
-        // Netzwerk (QEMU-Usermode-Netz: kein Root, keine Sonderrechte)
-        if config.network.mode == .nat {
+        // Netzwerk
+        let backend = network ?? (config.network.mode == .none ? .none : .user(forwards: allPortForwards(config)))
+        switch backend {
+        case .none:
+            break
+        case .vmnetRelay(let guestSocket, let hostSocket):
+            args += ["-netdev", "dgram,id=net0,local.type=unix,local.path=\(escape(guestSocket)),remote.type=unix,remote.path=\(escape(hostSocket))"]
+        case .user(let forwards):
             var netdev = "user,id=net0"
-            for forward in allPortForwards(config) {
+            if config.network.mode == .hostOnly {
+                netdev += ",restrict=on"
+            }
+            for forward in forwards {
                 netdev += ",hostfwd=\(forward.proto.rawValue):127.0.0.1:\(forward.hostPort)-:\(forward.guestPort)"
             }
             args += ["-netdev", netdev]
+        }
+        if backend != .none {
             args += ["-device", "virtio-net-pci,netdev=net0,mac=\(config.network.macAddress)"]
         }
 

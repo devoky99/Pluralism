@@ -68,8 +68,22 @@ final class AppModel: ObservableObject {
             guard let self, let index = self.configurations.firstIndex(where: { $0.id == saved.id }) else { return }
             self.configurations[index] = saved
         }
+        session.addressAllocator = { [weak self] in
+            self?.allocateAddressing()
+        }
         sessions[id] = session
         return session
+    }
+
+    /// Freies eigenes Netz (192.168.x.0/24), das keine andere VM der Bibliothek nutzt.
+    func allocateAddressing() -> GuestNetworkAddressing? {
+        var used = Set(configurations.compactMap { $0.network.addressing?.index })
+        for session in sessions.values {
+            if let index = session.configuration.network.addressing?.index {
+                used.insert(index)
+            }
+        }
+        return GuestNetworkAddressing.allocate(used: used)
     }
 
     var hasActiveVMs: Bool {
@@ -115,23 +129,36 @@ final class AppModel: ObservableObject {
     func createVM(_ request: NewVMRequest, completion: @escaping (Result<VMConfiguration, Error>) -> Void) {
         let library = self.library
         let toolchain = self.toolchain
+        var prepared = request.configuration
+        if prepared.network.addressing == nil {
+            prepared.network.addressing = allocateAddressing()
+        }
+        let initialConfig = prepared
         DispatchQueue.global(qos: .userInitiated).async {
-            var config = request.configuration
+            var config = initialConfig
             let result: Result<VMConfiguration, Error>
             do {
                 let bundle = try library.createBundle(for: config)
                 do {
                     try DiskImageService.createDisk(at: bundle.diskURL(for: config), sizeGiB: config.disk.sizeGiB,
                                                     format: config.disk.format, toolchain: toolchain)
-                    if config.guestOS == .windows && config.windows.unattend.enabled {
-                        _ = try GuestMediaBuilder.buildWindowsSetupMedia(
-                            bundle: bundle,
-                            settings: config.windows.unattend,
-                            password: request.password,
-                            enableRemoteDesktop: config.windows.rdpHostPort != nil,
-                            windowsISO: request.windowsISO,
-                            virtioISO: request.virtioISO)
-                        config.media.hasUnattendMedia = true
+                    if config.guestOS == .windows {
+                        // Schnelle virtio-Platte nur, wenn Setup den Treiber viostor automatisch bekommt.
+                        // Bei manueller Installation bleibt NVMe, das Windows ohne Treiber kennt.
+                        config.disk.bus = .nvme
+                        if config.windows.unattend.enabled {
+                            let media = try GuestMediaBuilder.buildWindowsSetupMedia(
+                                bundle: bundle,
+                                settings: config.windows.unattend,
+                                password: request.password,
+                                enableRemoteDesktop: config.windows.rdpHostPort != nil,
+                                windowsISO: request.windowsISO,
+                                virtioISO: request.virtioISO)
+                            config.media.hasUnattendMedia = true
+                            if media.copiedDrivers.contains("viostor") {
+                                config.disk.bus = .virtio
+                            }
+                        }
                     }
                     try bundle.save(config)
                 } catch {

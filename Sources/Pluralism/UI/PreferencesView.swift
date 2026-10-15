@@ -95,7 +95,7 @@ private struct QEMUPreferences: View {
                             .controlSize(.small)
                     }
                 }
-                Hint("Windows-VMs brauchen QEMU und swtpm aus Homebrew. Im Terminal: brew install qemu swtpm")
+                Hint("QEMU und swtpm sind in Pluralism enthalten. Ohne eigenen Pfad nutzt Pluralism die mitgelieferte Version.")
             }
             Section("Eigenes QEMU (optional)") {
                 HStack {
@@ -107,7 +107,7 @@ private struct QEMUPreferences: View {
                         }
                     }
                 }
-                Hint("Zum Beispiel ein eigener QEMU-Build mit dem Gerät tpm-crb-device für ein echtes TPM unter Windows. Leer lassen für Homebrew.")
+                Hint("Zum Beispiel ein eigener QEMU-Build mit dem Gerät tpm-crb-device für ein echtes TPM unter Windows. Leer lassen für die mitgelieferte Version.")
             }
         }
         .formStyle(.grouped)

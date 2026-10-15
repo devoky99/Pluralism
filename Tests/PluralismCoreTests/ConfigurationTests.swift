@@ -52,14 +52,20 @@ final class ConfigurationTests: XCTestCase {
     func testDefaultsPerGuest() {
         let linux = VMConfiguration.makeDefault(name: "Fedora", guestOS: .linux, host: host)
         XCTAssertEqual(linux.engine, .appleVirtualization)
-        XCTAssertEqual(linux.disk.format, .raw)
-        XCTAssertEqual(linux.disk.fileName, "disk.img")
+        XCTAssertEqual(linux.disk.format, .asif)
+        XCTAssertEqual(linux.disk.fileName, "disk.asif")
         XCTAssertTrue(linux.validationIssues(host: host).isEmpty)
+
+        var olderHost = host
+        olderHost.macOSMajorVersion = 15
+        XCTAssertEqual(VMConfiguration.makeDefault(name: "Alt", guestOS: .linux, host: olderHost).disk.format, .raw)
 
         let windows = VMConfiguration.makeDefault(name: "Windows 11", guestOS: .windows, host: host)
         XCTAssertEqual(windows.engine, .qemu)
-        XCTAssertEqual(windows.disk.format, .qcow2)
-        XCTAssertEqual(windows.disk.fileName, "disk.qcow2")
+        XCTAssertEqual(windows.disk.format, .raw)
+        XCTAssertEqual(windows.disk.fileName, "disk.img")
+        XCTAssertEqual(windows.disk.bus, .virtio)
+        XCTAssertNil(windows.disk.migration)
         XCTAssertNil(windows.windows.rdpHostPort)
         XCTAssertEqual(windows.display.qemuDevice, .ramfb)
         XCTAssertTrue(windows.validationIssues(host: host).isEmpty)
@@ -143,6 +149,54 @@ final class ConfigurationTests: XCTestCase {
         XCTAssertFalse(encoded.contains("sharedFolders"))
         XCTAssertFalse(encoded.contains("clipboard"))
         XCTAssertFalse(encoded.contains("GuestTools"))
+    }
+
+    func testOldWindowsVMsKeepNVMe() throws {
+        let json = """
+        {
+          "id": "6C2A2E8E-0000-4000-8000-000000000010",
+          "name": "Windows aus 0.1",
+          "guestOS": "windows",
+          "disk": { "sizeGiB": 96, "format": "qcow2", "fileName": "disk.qcow2", "syncMode": "fsync" }
+        }
+        """
+        let config = try PluralismJSON.decoder().decode(VMConfiguration.self, from: Data(json.utf8))
+        XCTAssertEqual(config.disk.bus, .nvme)
+        XCTAssertEqual(config.disk.format, .qcow2)
+
+        let linuxJSON = json.replacingOccurrences(of: "\"windows\"", with: "\"linux\"")
+        let linux = try PluralismJSON.decoder().decode(VMConfiguration.self, from: Data(linuxJSON.utf8))
+        XCTAssertEqual(linux.disk.bus, .virtio)
+
+        var current = VMConfiguration.makeDefault(name: "Neu", guestOS: .windows, host: host)
+        current.disk.migration = .driverPending
+        let roundTrip = try PluralismJSON.decoder().decode(VMConfiguration.self,
+                                                           from: PluralismJSON.encoder().encode(current))
+        XCTAssertEqual(roundTrip.disk.bus, .virtio)
+        XCTAssertEqual(roundTrip.disk.migration, .driverPending)
+    }
+
+    func testNetworkAddressing() {
+        let first = GuestNetworkAddressing.allocate(used: [])
+        XCTAssertEqual(first?.index, 120)
+        XCTAssertEqual(first?.subnet, "192.168.120.0")
+        XCTAssertEqual(first?.hostAddress, "192.168.120.1")
+        XCTAssertEqual(first?.guestAddress, "192.168.120.2")
+        XCTAssertEqual(GuestNetworkAddressing.allocate(used: [120, 121])?.index, 122)
+        XCTAssertNil(GuestNetworkAddressing.allocate(used: Set(GuestNetworkAddressing.indexRange)))
+        XCTAssertFalse(GuestNetworkAddressing.indexRange.contains(178))
+        XCTAssertFalse(GuestNetworkAddressing.indexRange.contains(64))
+    }
+
+    func testNetworkModeDecoding() throws {
+        let json = """
+        { "id": "6C2A2E8E-0000-4000-8000-000000000011", "name": "X", "guestOS": "linux",
+          "network": { "mode": "irgendwas", "macAddress": "52:54:00:01:02:03" } }
+        """
+        let config = try PluralismJSON.decoder().decode(VMConfiguration.self, from: Data(json.utf8))
+        XCTAssertEqual(config.network.mode, .nat)
+        XCTAssertNil(config.network.addressing)
+        XCTAssertEqual(MACAddress.bytes(config.network.macAddress), [0x52, 0x54, 0x00, 0x01, 0x02, 0x03])
     }
 
     func testMACAddresses() {

@@ -51,7 +51,9 @@ final class QEMUTests: XCTestCase {
 
         let devices = values(after: "-device", in: args)
         XCTAssertTrue(devices.contains("ramfb"))
-        XCTAssertTrue(devices.contains("nvme,drive=system,serial=pluralism0,bootindex=1"))
+        XCTAssertTrue(devices.contains("virtio-blk-pci,drive=system,iothread=iothread0,num-queues=6,bootindex=1"))
+        XCTAssertEqual(values(after: "-object", in: args), ["iothread,id=iothread0"])
+        XCTAssertFalse(devices.contains { $0.hasPrefix("nvme") })
         XCTAssertTrue(devices.contains("usb-storage,drive=installer,removable=on,bus=xhci.0,bootindex=0"))
         XCTAssertTrue(devices.contains("usb-kbd,bus=xhci.0"))
         XCTAssertTrue(devices.contains("usb-tablet,bus=xhci.0"))
@@ -64,7 +66,7 @@ final class QEMUTests: XCTestCase {
         let drives = values(after: "-drive", in: args)
         XCTAssertTrue(drives.contains("if=pflash,format=raw,unit=0,file=/opt/homebrew/share/qemu/edk2-aarch64-code.fd,readonly=on"))
         XCTAssertTrue(drives.contains { $0.hasPrefix("if=pflash,format=raw,unit=1,file=") && $0.hasSuffix("qemu-efi-vars.fd") })
-        XCTAssertTrue(drives.contains { $0.contains("id=system,format=qcow2") && $0.contains("disk.qcow2") })
+        XCTAssertTrue(drives.contains { $0.contains("id=system,format=raw") && $0.contains("disk.img") && $0.contains("aio=threads") && $0.hasSuffix("cache=writeback") })
 
         XCTAssertEqual(values(after: "-netdev", in: args), ["user,id=net0"])
         XCTAssertEqual(values(after: "-qmp", in: args), ["unix:/tmp/pluralism-501/\(config.shortID)/qmp.sock,server=on,wait=off"])
@@ -178,13 +180,51 @@ final class QEMUTests: XCTestCase {
                        ["user,id=net0,hostfwd=tcp:127.0.0.1:2222-:22,hostfwd=tcp:127.0.0.1:33389-:3389"])
     }
 
+    func testNVMeBusAndMigrationHelperDisk() throws {
+        var config = windowsConfig()
+        config.disk.bus = .nvme
+        var plan = try makePlan(config)
+        var devices = values(after: "-device", in: plan.qemu.arguments)
+        XCTAssertTrue(devices.contains("nvme,drive=system,serial=pluralism0,bootindex=1"))
+        XCTAssertFalse(plan.qemu.arguments.contains("-object"))
+
+        config.disk.migration = .driverPending
+        plan = try makePlan(config)
+        devices = values(after: "-device", in: plan.qemu.arguments)
+        XCTAssertTrue(devices.contains("nvme,drive=system,serial=pluralism0,bootindex=1"))
+        XCTAssertTrue(devices.contains("virtio-blk-pci,drive=helper,iothread=iothread0"))
+        XCTAssertTrue(values(after: "-drive", in: plan.qemu.arguments).contains { $0.hasPrefix("if=none,id=helper,format=raw") && $0.hasSuffix("virtio-helper.img") })
+    }
+
+    func testVmnetRelayBackend() throws {
+        let config = windowsConfig()
+        let runtime = RuntimePaths(config: config, userID: 501)
+        let plan = try QEMUCommandBuilder.makePlan(config: config, bundle: bundle, toolchain: toolchain, runtime: runtime,
+                                                   media: QEMUMedia(),
+                                                   network: .vmnetRelay(guestSocket: runtime.netGuestSocket.path,
+                                                                        hostSocket: runtime.netHostSocket.path))
+        let base = "/tmp/pluralism-501/\(config.shortID)"
+        XCTAssertEqual(values(after: "-netdev", in: plan.qemu.arguments),
+                       ["dgram,id=net0,local.type=unix,local.path=\(base)/net-q.sock,remote.type=unix,remote.path=\(base)/net-h.sock"])
+        XCTAssertTrue(values(after: "-device", in: plan.qemu.arguments).contains("virtio-net-pci,netdev=net0,mac=\(config.network.macAddress)"))
+        XCTAssertTrue(runtime.allSocketPathsFit)
+    }
+
+    func testHostOnlyFallbackIsRestricted() throws {
+        var config = windowsConfig()
+        config.network.mode = .hostOnly
+        let plan = try makePlan(config)
+        XCTAssertEqual(values(after: "-netdev", in: plan.qemu.arguments), ["user,id=net0,restrict=on"])
+    }
+
     func testLinuxPlanUsesVirtioBlock() throws {
         var config = VMConfiguration.makeDefault(name: "Debian", guestOS: .linux, host: host)
         config.engine = .qemu
-        config.disk = DiskSettings(sizeGiB: 64, format: .qcow2)
+        config.disk = DiskSettings(sizeGiB: 64, format: .qcow2, bus: .nvme)
         let plan = try makePlan(config)
         let devices = values(after: "-device", in: plan.qemu.arguments)
-        XCTAssertTrue(devices.contains("virtio-blk-pci,drive=system,bootindex=1"))
+        // Linux-Gäste laufen in QEMU immer mit virtio-blk.
+        XCTAssertTrue(devices.contains("virtio-blk-pci,drive=system,iothread=iothread0,num-queues=4,bootindex=1"))
         XCTAssertFalse(plan.qemu.arguments.contains("-fsdev"))
         XCTAssertEqual(values(after: "-rtc", in: plan.qemu.arguments), ["base=utc"])
         XCTAssertTrue(values(after: "-netdev", in: plan.qemu.arguments).first?.contains("hostfwd") == false)

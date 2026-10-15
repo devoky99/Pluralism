@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import PluralismCore
+import PluralismNet
 import Virtualization
 
 /// Engine für Linux-ARM64-Gäste auf Apples Virtualization.framework.
@@ -22,6 +23,9 @@ final class AppleVMEngine: NSObject, VMEngine, VZVirtualMachineDelegate {
     private var virtualMachine: VZVirtualMachine?
     private var vzConfiguration: VZVirtualMachineConfiguration?
     private weak var displayView: VZVirtualMachineView?
+    /// Das vmnet-Netz muss leben, solange die VM läuft.
+    private var network: VMNetwork?
+    private(set) var activeNetwork: ActiveNetwork = .none
 
     init(bundle: VMBundle, config: VMConfiguration) {
         self.bundle = bundle
@@ -43,7 +47,13 @@ final class AppleVMEngine: NSObject, VMEngine, VZVirtualMachineDelegate {
         guard virtualMachine == nil else { return }
         state = .starting
         do {
-            let configuration = try AppleConfigurationFactory.make(config: config, bundle: bundle)
+            let (network, active, notice) = makeNetwork()
+            self.network = network
+            activeNetwork = active
+            if let notice {
+                onNotice?(notice)
+            }
+            let configuration = try AppleConfigurationFactory.make(config: config, bundle: bundle, network: network)
             let vm = VZVirtualMachine(configuration: configuration)
             vm.delegate = self
             vzConfiguration = configuration
@@ -57,6 +67,8 @@ final class AppleVMEngine: NSObject, VMEngine, VZVirtualMachineDelegate {
         } catch {
             virtualMachine = nil
             vzConfiguration = nil
+            network = nil
+            activeNetwork = .none
             state = .error(error.localizedDescription)
         }
     }
@@ -225,17 +237,32 @@ final class AppleVMEngine: NSObject, VMEngine, VZVirtualMachineDelegate {
     func sendCtrlAltDelete() {}
 
     var supportsHotPlug: Bool {
-        if #available(macOS 15, *) {
-            return virtualMachine != nil
+        virtualMachine != nil
+    }
+
+    /// Eigenes vmnet-Netz für die VM. Bei Fehlern: Apples NAT („Internet und Mac“) bzw. kein Netz („Nur Mac“).
+    private func makeNetwork() -> (VMNetwork?, ActiveNetwork, String?) {
+        switch config.network.mode {
+        case .none:
+            return (nil, .none, nil)
+        case .nat, .hostOnly:
+            guard let addressing = config.network.addressing else {
+                return (nil, config.network.mode == .nat ? .fallback : .none, nil)
+            }
+            do {
+                let network = try VMNetwork(mode: config.network.mode == .nat ? .shared : .hostOnly,
+                                            addressing: addressing, guestMAC: config.network.macAddress)
+                return (network, .vmnet(addressing), nil)
+            } catch {
+                if config.network.mode == .nat {
+                    return (nil, .fallback, "Eigenes Netz (vmnet) nicht verfügbar: \(error.localizedDescription) Die VM nutzt Apples einfaches NAT.")
+                }
+                return (nil, .none, "Netz „Nur Mac“ nicht verfügbar: \(error.localizedDescription) Die VM startet ohne Netzwerk.")
+            }
         }
-        return false
     }
 
     func hotPlugImage(_ url: URL, completion: @escaping (Error?) -> Void) {
-        guard #available(macOS 15, *) else {
-            completion(PluralismError.message("Abbilder im laufenden Betrieb anhängen geht erst ab macOS 15."))
-            return
-        }
         guard let vm = virtualMachine, let controller = vm.usbControllers.first else {
             completion(PluralismError.message("Die VM läuft nicht oder hat keinen USB-Controller."))
             return
@@ -272,6 +299,8 @@ final class AppleVMEngine: NSObject, VMEngine, VZVirtualMachineDelegate {
     private func didStop(error: Error?) {
         virtualMachine = nil
         vzConfiguration = nil
+        network = nil
+        activeNetwork = .none
         displayView?.virtualMachine = nil
         if let error {
             state = .error(error.localizedDescription)

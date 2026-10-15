@@ -16,7 +16,20 @@ struct ToolchainReport {
 }
 
 /// Sucht QEMU, qemu-img, swtpm und die UEFI-Firmware.
+/// Reihenfolge: eigener Pfad aus den Einstellungen, dann die mitgelieferte Laufzeit in der App,
+/// zuletzt Homebrew.
 enum ToolchainDetector {
+    /// Die in die App gepackte Laufzeit (Contents/Resources/Runtime).
+    static var bundledRuntimeDirectory: URL? {
+        Bundle.main.resourceURL?.appendingPathComponent("Runtime", isDirectory: true)
+    }
+
+    static var bundledQEMU: String? {
+        guard let dir = bundledRuntimeDirectory else { return nil }
+        let path = dir.appendingPathComponent("bin/qemu-system-aarch64").path
+        return FileManager.default.isExecutableFile(atPath: path) ? path : nil
+    }
+
     static func detect(qemuOverride: String?) -> ToolchainReport {
         let fm = FileManager.default
         var lines: [(String, String, Bool)] = []
@@ -32,22 +45,27 @@ enum ToolchainDetector {
         }
 
         var qemuPath: String?
+        var origin = "Homebrew"
         if let qemuOverride, !qemuOverride.isEmpty, fm.isExecutableFile(atPath: qemuOverride) {
             qemuPath = qemuOverride
+            origin = "eigener Pfad"
+        } else if let bundled = bundledQEMU {
+            qemuPath = bundled
+            origin = "in Pluralism enthalten"
         } else {
             qemuPath = findBinary("qemu-system-aarch64")
         }
 
         guard let qemu = qemuPath else {
-            lines.append(("QEMU", "nicht gefunden (brew install qemu)", false))
+            lines.append(("QEMU", "nicht gefunden (diese Pluralism-Version enthält kein QEMU)", false))
             return ToolchainReport(toolchain: nil, lines: lines.map { (label: $0.0, value: $0.1, ok: $0.2) })
         }
         let qemuDir = (qemu as NSString).deletingLastPathComponent
 
         let versionOutput = (try? ShellCommand.run(qemu, ["-version"], timeout: 20).output) ?? ""
         let version = QEMUToolchainLocator.parseVersion(versionOutput)
-        let versionText = version.map { " (" + $0 + ")" } ?? ""
-        lines.append(("QEMU", qemu + versionText, true))
+        let versionText = version.map { " " + $0 } ?? ""
+        lines.append(("QEMU", origin + versionText, true))
 
         let deviceOutput = (try? ShellCommand.run(qemu, ["-machine", "virt", "-device", "help"], timeout: 30).output) ?? ""
         let devices = QEMUToolchainLocator.parseDeviceHelp(deviceOutput)
@@ -56,7 +74,7 @@ enum ToolchainDetector {
         lines.append(("qemu-img", qemuImg ?? "nicht gefunden", qemuImg != nil))
 
         let swtpm = findBinary("swtpm", preferredDirectory: qemuDir)
-        lines.append(("swtpm (TPM)", swtpm ?? "nicht gefunden (brew install swtpm)", swtpm != nil))
+        lines.append(("swtpm (TPM)", swtpm ?? "nicht gefunden", swtpm != nil))
 
         func findFile(_ names: [String]) -> String? {
             for dir in QEMUToolchainLocator.firmwareDirectories(forQEMUBinary: qemu) {

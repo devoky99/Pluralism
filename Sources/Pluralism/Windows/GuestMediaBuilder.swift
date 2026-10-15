@@ -45,10 +45,15 @@ enum GuestMediaBuilder {
             defer { ISOBuilder.detach(mount) }
             let driverRoot = staging.appendingPathComponent(UnattendBuilder.driverFolderName, isDirectory: true)
             try fm.createDirectory(at: driverRoot, withIntermediateDirectories: true)
+            let winPERoot = staging.appendingPathComponent(UnattendBuilder.winPEDriverFolderName, isDirectory: true)
+            try fm.createDirectory(at: winPERoot, withIntermediateDirectories: true)
             for folder in UnattendBuilder.virtioDriverFolders {
                 let source = mount.appendingPathComponent(UnattendBuilder.virtioDriverPath(folder), isDirectory: true)
                 guard fm.fileExists(atPath: source.path) else { continue }
                 try fm.copyItem(at: source, to: driverRoot.appendingPathComponent(folder, isDirectory: true))
+                if UnattendBuilder.winPEDriverFolders.contains(folder) {
+                    try fm.copyItem(at: source, to: winPERoot.appendingPathComponent(folder, isDirectory: true))
+                }
                 copied.append(folder)
             }
         }

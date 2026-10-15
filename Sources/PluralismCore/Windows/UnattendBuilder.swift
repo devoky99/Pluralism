@@ -32,6 +32,13 @@ public enum UnattendBuilder {
 
     public static let setupScriptName = "pluralism-setup.cmd"
     public static let driverFolderName = "pluralism-drivers"
+    /// Windows Setup sucht im Wurzelverzeichnis aller Laufwerke nach diesem Ordner und lädt die
+    /// Treiber darin schon während der Installation (windowsPE). So sieht Setup die virtio-Platte
+    /// und hat sofort Netzwerk. Die Treiber landen auch im installierten System.
+    public static let winPEDriverFolderName = "$WinPEDriver$"
+    /// Treiber für den $WinPEDriver$-Ordner: Speicher, Netzwerk und Eingabe. Die Anzeige (viogpudo)
+    /// bleibt bewusst draußen, damit die Installation sicher mit dem einfachen Framebuffer läuft.
+    public static let winPEDriverFolders = ["viostor", "vioscsi", "NetKVM", "vioinput", "Balloon", "viorng"]
 
     /// Treiberordner im virtio-win-ISO, die Pluralism für ARM64 übernimmt. Nur Geräte für
     /// Netzwerk, Speicher und Peripherie, keine Kanäle zwischen Mac und Gast.

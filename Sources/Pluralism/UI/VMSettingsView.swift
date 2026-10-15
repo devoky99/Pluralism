@@ -106,6 +106,16 @@ struct VMSettingsView: View {
                     Text(mode.displayName).tag(mode)
                 }
             }
+            if draft.engine == .qemu && draft.guestOS == .windows {
+                Picker("Systemplatte", selection: $draft.disk.bus) {
+                    ForEach(DiskBus.allCases) { bus in
+                        Text(bus.displayName).tag(bus)
+                    }
+                }
+                if draft.disk.bus == .virtio && original.disk.bus == .nvme {
+                    Hint("Achtung: Ohne installierten viostor-Treiber startet Windows dann nicht. Sicherer ist „Auf schnelle Platte umstellen“ in der Übersicht der VM.")
+                }
+            }
         }
     }
 
@@ -141,6 +151,11 @@ struct VMSettingsView: View {
                     Text(mode.displayName).tag(mode)
                 }
             }
+            if let addressing = draft.network.addressing, draft.network.mode != .none {
+                LabeledContent("Eigenes Netz", value: "\(addressing.subnet)/24")
+                LabeledContent("Adresse der VM", value: addressing.guestAddress)
+                Hint("Die VM bekommt diese Adresse fest zugewiesen und ist vom Mac aus direkt erreichbar, z. B. ssh benutzer@\(addressing.guestAddress). Andere VMs sehen sie nicht.")
+            }
             HStack {
                 TextField("MAC-Adresse", text: $draft.network.macAddress)
                     .font(.system(.body, design: .monospaced))
@@ -149,7 +164,9 @@ struct VMSettingsView: View {
             if !MACAddress.isValid(draft.network.macAddress) {
                 Hint("Ungültige MAC-Adresse (Format 52:54:00:12:34:56).")
             }
-            if draft.engine == .qemu {
+            if draft.engine == .qemu && draft.network.mode != .none {
+                Text("Portweiterleitungen (nur im Ausweich-Netz)")
+                    .font(.callout)
                 ForEach($draft.network.portForwards) { $forward in
                     HStack {
                         Picker("", selection: $forward.proto) {
@@ -174,9 +191,7 @@ struct VMSettingsView: View {
                 Button("Portweiterleitung hinzufügen") {
                     draft.network.portForwards.append(PortForward(hostPort: 2222, guestPort: 22, label: "SSH"))
                 }
-                Hint("Weiterleitungen gelten für 127.0.0.1 auf dem Mac, z. B. ssh -p 2222 benutzer@127.0.0.1.")
-            } else {
-                Hint("Der Gast bekommt eine eigene Adresse im Netz 192.168.64.0/24 und ist vom Mac aus direkt erreichbar.")
+                Hint("Nur nötig, wenn das schnelle Netz (vmnet) nicht verfügbar ist. Dann gelten Weiterleitungen für 127.0.0.1 auf dem Mac, z. B. ssh -p 2222 benutzer@127.0.0.1.")
             }
         }
     }
@@ -201,7 +216,7 @@ struct VMSettingsView: View {
             }
             if draft.windows.tpm == .emulated {
                 if toolchain?.swtpmPath == nil {
-                    Hint("swtpm fehlt: brew install swtpm")
+                    Hint("swtpm fehlt in dieser Pluralism-Version.")
                 } else if toolchain?.supportsTPMCRB == false {
                     Hint("Dieses QEMU hat nur tpm-tis-device. Mit Windows ARM auf Apple Silicon meldet Windows dann oft „Code 10“. Ein QEMU-Build mit tpm-crb-device behebt das.")
                 }
@@ -213,13 +228,14 @@ struct VMSettingsView: View {
             } else {
                 Hint("Beim Umschalten werden die UEFI-Variablen neu angelegt.")
             }
-            Toggle("Remote Desktop weiterleiten", isOn: Binding(
+            Toggle("Remote Desktop", isOn: Binding(
                 get: { draft.windows.rdpHostPort != nil },
                 set: { draft.windows.rdpHostPort = $0 ? 33389 : nil }))
             if draft.windows.rdpHostPort != nil {
-                TextField("Mac-Port für RDP", value: Binding(
+                TextField("Mac-Port im Ausweich-Netz", value: Binding(
                     get: { draft.windows.rdpHostPort ?? 33389 },
                     set: { draft.windows.rdpHostPort = $0 }), format: .number.grouping(.never))
+                Hint("Im schnellen Netz verbindet sich Pluralism direkt mit der Adresse der VM. Der Port gilt nur im Ausweich-Netz.")
             }
         }
     }

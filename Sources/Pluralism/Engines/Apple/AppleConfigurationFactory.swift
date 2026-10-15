@@ -1,5 +1,6 @@
 import Foundation
 import PluralismCore
+import PluralismNet
 import Virtualization
 
 /// Übersetzt eine Pluralism-Konfiguration in eine `VZVirtualMachineConfiguration`
@@ -10,7 +11,9 @@ import Virtualization
 /// Isolation: Es gibt bewusst keine Zwischenablage (SPICE-Agent-Port), keine geteilten Ordner
 /// (virtiofs) und keinen vsock-Kanal. Nach außen gehen nur Netzwerk und Peripherie.
 enum AppleConfigurationFactory {
-    static func make(config: VMConfiguration, bundle: VMBundle) throws -> VZVirtualMachineConfiguration {
+    /// - Parameter network: eigenes vmnet-Netz der VM. Ohne Netz und im Modus „Internet und Mac“
+    ///   nutzt die VM Apples einfaches NAT, im Modus „Nur Mac“ bekommt sie keine Netzwerkkarte.
+    static func make(config: VMConfiguration, bundle: VMBundle, network vmnetNetwork: VMNetwork?) throws -> VZVirtualMachineConfiguration {
         let fm = FileManager.default
         try fm.createDirectory(at: bundle.logsDirectory, withIntermediateDirectories: true)
 
@@ -21,10 +24,18 @@ enum AppleConfigurationFactory {
         vz.bootLoader = try makeBootLoader(bundle: bundle)
         vz.storageDevices = try makeStorage(config: config, bundle: bundle)
 
-        // Netzwerk: NAT über Apples eingebautes Netz (Gast bekommt eine Adresse per DHCP)
-        if config.network.mode == .nat {
+        // Netzwerk: eigenes vmnet-Netz (feste Adresse per DHCP-Reservierung), sonst Apples NAT.
+        let attachment: VZNetworkDeviceAttachment?
+        if let vmnetNetwork {
+            attachment = VZVmnetNetworkDeviceAttachment(network: vmnetNetwork.ref)
+        } else if config.network.mode == .nat {
+            attachment = VZNATNetworkDeviceAttachment()
+        } else {
+            attachment = nil
+        }
+        if let attachment {
             let network = VZVirtioNetworkDeviceConfiguration()
-            network.attachment = VZNATNetworkDeviceAttachment()
+            network.attachment = attachment
             if let mac = VZMACAddress(string: config.network.macAddress) {
                 network.macAddress = mac
             }
@@ -74,10 +85,8 @@ enum AppleConfigurationFactory {
             vz.serialPorts = [serial]
         }
 
-        // USB-Controller für das Anhängen von Abbildern im laufenden Betrieb (macOS 15)
-        if #available(macOS 15, *) {
-            vz.usbControllers = [VZXHCIControllerConfiguration()]
-        }
+        // USB-Controller für das Anhängen von Abbildern im laufenden Betrieb
+        vz.usbControllers = [VZXHCIControllerConfiguration()]
 
         try vz.validate()
         return vz
@@ -95,10 +104,8 @@ enum AppleConfigurationFactory {
             try identifier.dataRepresentation.write(to: bundle.machineIdentifierURL, options: .atomic)
             platform.machineIdentifier = identifier
         }
-        if #available(macOS 15, *) {
-            if config.advanced.nestedVirtualization && VZGenericPlatformConfiguration.isNestedVirtualizationSupported {
-                platform.isNestedVirtualizationEnabled = true
-            }
+        if config.advanced.nestedVirtualization && VZGenericPlatformConfiguration.isNestedVirtualizationSupported {
+            platform.isNestedVirtualizationEnabled = true
         }
         return platform
     }

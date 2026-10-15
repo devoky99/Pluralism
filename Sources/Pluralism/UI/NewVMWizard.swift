@@ -19,7 +19,7 @@ struct NewVMWizard: View {
     @State private var memoryGiB = 8
     @State private var diskGiB = 64
     @State private var engine: VMEngineKind = .appleVirtualization
-    @State private var appleDiskFormat: DiskFormat = .raw
+    @State private var appleDiskFormat: DiskFormat = .asif
     @State private var creating = false
     @State private var errorText: String?
 
@@ -116,7 +116,7 @@ struct NewVMWizard: View {
                 .textFieldStyle(.roundedBorder)
             Hint("Pluralism unterstützt nur ARM64-Gäste. x86-Systeme laufen nicht.")
             if os == .windows && model.toolchain == nil {
-                Label("QEMU fehlt noch. Im Terminal: brew install qemu swtpm. Danach in den Einstellungen von Pluralism „Neu prüfen“.", systemImage: "exclamationmark.triangle")
+                Label("Diese Pluralism-Version enthält kein QEMU. Lade die aktuelle Version oder hinterlege in den Einstellungen einen eigenen QEMU-Pfad.", systemImage: "exclamationmark.triangle")
                     .foregroundStyle(.orange)
             }
         }
@@ -241,7 +241,7 @@ struct NewVMWizard: View {
                             Text(kind.displayName).tag(kind)
                         }
                     }
-                    if engine == .appleVirtualization && model.host.macOSMajorVersion >= 26 {
+                    if engine == .appleVirtualization {
                         Picker("Plattenformat", selection: $appleDiskFormat) {
                             Text(DiskFormat.raw.displayName).tag(DiskFormat.raw)
                             Text(DiskFormat.asif.displayName).tag(DiskFormat.asif)
@@ -333,7 +333,7 @@ struct NewVMWizard: View {
         config.engine = os == .windows ? .qemu : engine
         config.cpuCount = cpuCount
         config.memoryMiB = memoryGiB * 1024
-        let format: DiskFormat = config.engine == .qemu ? .qcow2 : appleDiskFormat
+        let format: DiskFormat = config.engine == .qemu ? .raw : appleDiskFormat
         config.disk = DiskSettings(sizeGiB: diskGiB, format: format)
         config.media.installerISOPath = installerPath.isEmpty ? nil : installerPath
         config.media.attachInstaller = !installerPath.isEmpty
@@ -348,7 +348,7 @@ struct NewVMWizard: View {
             return
         }
         if config.engine == .qemu && model.toolchain == nil {
-            errorText = "QEMU wurde nicht gefunden (brew install qemu swtpm)."
+            errorText = "QEMU wurde nicht gefunden. Diese Pluralism-Version enthält keine QEMU-Laufzeit."
             return
         }
 

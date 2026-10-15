@@ -96,6 +96,31 @@ public enum DiskSyncMode: String, Codable, CaseIterable, Identifiable, Sendable 
     }
 }
 
+/// Wie die Systemplatte im Gast erscheint (nur QEMU-Engine).
+public enum DiskBus: String, Codable, CaseIterable, Identifiable, Sendable {
+    /// Paravirtuelle Platte mit eigenem Ein-/Ausgabe-Thread. Schnell, braucht unter Windows den Treiber viostor.
+    case virtio
+    /// Emulierte NVMe-Platte. Langsamer, Windows kennt sie ohne Zusatztreiber.
+    case nvme
+
+    public var id: String { rawValue }
+
+    public var displayName: String {
+        switch self {
+        case .virtio: return "virtio (schnell)"
+        case .nvme: return "NVMe (ohne Treiber, langsamer)"
+        }
+    }
+}
+
+/// Umstellung einer bestehenden Windows-VM von NVMe auf virtio.
+public enum DiskBusMigration: String, Codable, Sendable {
+    /// Nächster Start: Hilfsplatte (virtio) anhängen, damit Windows den Treiber viostor einbindet.
+    case driverPending
+    /// Windows lief mit Hilfsplatte. Nächster Start: Snapshot anlegen und auf virtio umschalten.
+    case readyToSwitch
+}
+
 // MARK: - Einstellungsgruppen
 
 public struct DiskSettings: Codable, Equatable, Sendable {
@@ -103,12 +128,17 @@ public struct DiskSettings: Codable, Equatable, Sendable {
     public var format: DiskFormat
     public var fileName: String
     public var syncMode: DiskSyncMode
+    public var bus: DiskBus
+    public var migration: DiskBusMigration?
 
-    public init(sizeGiB: Int = 64, format: DiskFormat = .raw, fileName: String? = nil, syncMode: DiskSyncMode = .fsync) {
+    public init(sizeGiB: Int = 64, format: DiskFormat = .raw, fileName: String? = nil, syncMode: DiskSyncMode = .fsync,
+                bus: DiskBus = .virtio, migration: DiskBusMigration? = nil) {
         self.sizeGiB = sizeGiB
         self.format = format
         self.fileName = fileName ?? "disk.\(format.fileExtension)"
         self.syncMode = syncMode
+        self.bus = bus
+        self.migration = migration
     }
 
     public init(from decoder: Decoder) throws {
@@ -118,6 +148,13 @@ public struct DiskSettings: Codable, Equatable, Sendable {
         format = try c.decode(.format, default: fallback.format)
         fileName = try c.decode(.fileName, default: "disk.\(format.fileExtension)")
         syncMode = try c.decode(.syncMode, default: fallback.syncMode)
+        bus = try c.decode(.bus, default: .virtio)
+        migration = try c.decodeIfPresent(DiskBusMigration.self, forKey: .migration)
+    }
+
+    /// Prüft, ob in einer gespeicherten Konfiguration das Feld "bus" fehlt (VMs aus Version 0.1).
+    struct BusProbe: Decodable {
+        var bus: DiskBus?
     }
 }
 
@@ -211,8 +248,10 @@ public struct DisplaySettings: Codable, Equatable, Sendable {
 }
 
 public enum NetworkMode: String, Codable, CaseIterable, Identifiable, Sendable {
-    /// Gemeinsames Netz mit dem Mac (NAT). Kein Root und keine besonderen Rechte nötig.
+    /// Internet und Mac erreichbar (vmnet "shared", NAT nach außen).
     case nat
+    /// Nur der Mac ist erreichbar, kein Internet (vmnet "host").
+    case hostOnly
     /// Keine Netzwerkkarte.
     case none
 
@@ -220,9 +259,35 @@ public enum NetworkMode: String, Codable, CaseIterable, Identifiable, Sendable {
 
     public var displayName: String {
         switch self {
-        case .nat: return "Gemeinsames Netzwerk (NAT)"
+        case .nat: return "Internet und Mac"
+        case .hostOnly: return "Nur Mac (kein Internet)"
         case .none: return "Kein Netzwerk"
         }
+    }
+}
+
+/// Adressen des eigenen Netzes einer VM. Jede VM bekommt ein eigenes /24-Netz
+/// (192.168.<index>.0), damit VMs sich nicht gegenseitig sehen.
+/// .1 ist der Mac, .2 bekommt der Gast fest per DHCP-Reservierung.
+public struct GuestNetworkAddressing: Codable, Equatable, Sendable {
+    /// Bereich für den dritten Teil der Adresse. Meidet 192.168.0 bis 192.168.2 und 192.168.178
+    /// (typische Heimnetze) sowie 192.168.64 (Standard von vmnet).
+    public static let indexRange = 120...169
+
+    public var index: Int
+
+    public init(index: Int) {
+        self.index = index
+    }
+
+    public var subnet: String { "192.168.\(index).0" }
+    public var mask: String { "255.255.255.0" }
+    public var hostAddress: String { "192.168.\(index).1" }
+    public var guestAddress: String { "192.168.\(index).2" }
+
+    /// Kleinster freier Index, nil wenn alle belegt sind.
+    public static func allocate(used: Set<Int>) -> GuestNetworkAddressing? {
+        indexRange.first { !used.contains($0) }.map(GuestNetworkAddressing.init(index:))
     }
 }
 
@@ -252,18 +317,25 @@ public struct PortForward: Codable, Equatable, Identifiable, Sendable {
 public struct NetworkSettings: Codable, Equatable, Sendable {
     public var mode: NetworkMode
     public var macAddress: String
+    /// Eigenes Netz der VM. Wird beim Anlegen oder beim ersten Start vergeben.
+    public var addressing: GuestNetworkAddressing?
+    /// Weiterleitungen gelten nur im Ausweich-Netz (QEMU-Usermode), wenn vmnet nicht verfügbar ist.
+    /// Mit vmnet ist der Gast vom Mac direkt unter seiner Adresse erreichbar.
     public var portForwards: [PortForward]
 
-    public init(mode: NetworkMode = .nat, macAddress: String = MACAddress.random(), portForwards: [PortForward] = []) {
+    public init(mode: NetworkMode = .nat, macAddress: String = MACAddress.random(),
+                addressing: GuestNetworkAddressing? = nil, portForwards: [PortForward] = []) {
         self.mode = mode
         self.macAddress = macAddress
+        self.addressing = addressing
         self.portForwards = portForwards
     }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        mode = try c.decode(.mode, default: .nat)
+        mode = (try? c.decode(NetworkMode.self, forKey: .mode)) ?? .nat
         macAddress = try c.decode(.macAddress, default: MACAddress.random())
+        addressing = try c.decodeIfPresent(GuestNetworkAddressing.self, forKey: .addressing)
         portForwards = try c.decode(.portForwards, default: [])
     }
 }
@@ -503,6 +575,10 @@ public struct VMConfiguration: Codable, Equatable, Identifiable, Sendable {
         cpuCount = try c.decode(.cpuCount, default: 2)
         memoryMiB = try c.decode(.memoryMiB, default: 4096)
         disk = try c.decode(.disk, default: DiskSettings())
+        // VMs aus Version 0.1 kennen das Feld "bus" nicht. Windows wurde damals auf NVMe installiert.
+        if guestOS == .windows, (try? c.decodeIfPresent(DiskSettings.BusProbe.self, forKey: .disk))?.bus == nil {
+            disk.bus = .nvme
+        }
         media = try c.decode(.media, default: MediaSettings())
         display = try c.decode(.display, default: DisplaySettings())
         network = try c.decode(.network, default: NetworkSettings())
@@ -518,7 +594,9 @@ public struct VMConfiguration: Codable, Equatable, Identifiable, Sendable {
     public static func makeDefault(name: String, guestOS: GuestOS, host: HostProfile) -> VMConfiguration {
         let rec = ResourceAdvisor.recommend(for: guestOS, host: host)
         let engine = guestOS.defaultEngine
-        let format: DiskFormat = engine == .qemu ? .qcow2 : .raw
+        // QEMU: Rohformat (schneller als qcow2, Snapshots laufen über APFS-Klone).
+        // Apple-Engine: ASIF ab macOS 26, sonst RAW.
+        let format: DiskFormat = engine == .appleVirtualization && host.macOSMajorVersion >= 26 ? .asif : .raw
         var config = VMConfiguration(
             name: name,
             guestOS: guestOS,
@@ -601,9 +679,19 @@ public enum MACAddress {
     }
 
     public static func isValid(_ string: String) -> Bool {
+        bytes(string) != nil
+    }
+
+    /// Die sechs Bytes einer Adresse wie "52:54:00:12:34:56", nil bei ungültiger Eingabe.
+    public static func bytes(_ string: String) -> [UInt8]? {
         let parts = string.split(separator: ":")
-        guard parts.count == 6 else { return false }
-        return parts.allSatisfy { $0.count == 2 && UInt8($0, radix: 16) != nil }
+        guard parts.count == 6 else { return nil }
+        var result: [UInt8] = []
+        for part in parts {
+            guard part.count == 2, let byte = UInt8(part, radix: 16) else { return nil }
+            result.append(byte)
+        }
+        return result
     }
 }
 

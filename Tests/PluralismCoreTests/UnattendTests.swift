@@ -108,6 +108,12 @@ final class UnattendTests: XCTestCase {
         XCTAssertEqual(UnattendBuilder.virtioDriverPath("NetKVM"), "NetKVM/w11/ARM64")
         XCTAssertTrue(UnattendBuilder.virtioDriverFolders.contains("NetKVM"))
         XCTAssertTrue(UnattendBuilder.virtioDriverFolders.contains("viogpudo"))
+        // Schon während der Installation: Platte, Netzwerk, Eingabe, aber nicht die Anzeige
+        XCTAssertEqual(UnattendBuilder.winPEDriverFolderName, "$WinPEDriver$")
+        XCTAssertTrue(UnattendBuilder.winPEDriverFolders.contains("viostor"))
+        XCTAssertTrue(UnattendBuilder.winPEDriverFolders.contains("NetKVM"))
+        XCTAssertFalse(UnattendBuilder.winPEDriverFolders.contains("viogpudo"))
+        XCTAssertTrue(Set(UnattendBuilder.winPEDriverFolders).isSubset(of: Set(UnattendBuilder.virtioDriverFolders)))
         // Isolation: kein Treiber für Kanäle zwischen Mac und Gast
         XCTAssertFalse(UnattendBuilder.virtioDriverFolders.contains("vioserial"))
         XCTAssertFalse(UnattendBuilder.virtioDriverFolders.contains("viofs"))

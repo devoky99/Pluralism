@@ -2,10 +2,15 @@ import AppKit
 import Darwin
 import Foundation
 import PluralismCore
+import PluralismNet
 
 /// Engine für Windows-11-ARM64-Gäste (und optional Linux) über QEMU mit
 /// Hypervisor.framework-Beschleunigung. QEMU läuft als eigener Prozess; Pluralism steuert
 /// ihn über QMP und zeigt das Bild über eine lokale VNC-Verbindung an.
+///
+/// Netzwerk: Pluralism legt ein eigenes vmnet-Netz für die VM an und reicht die Ethernet-Rahmen
+/// zwischen QEMU (-netdev dgram) und vmnet durch. Klappt das nicht, nutzt QEMU sein eingebautes
+/// Usermode-Netz als Ausweichweg.
 final class QEMUEngine: VMEngine {
     let bundle: VMBundle
     private(set) var config: VMConfiguration
@@ -24,7 +29,9 @@ final class QEMUEngine: VMEngine {
     private var tpmProcess: ManagedProcess?
     private var qmp: QMPClient?
     private var rfb: RFBConnection?
+    private var relay: PacketRelay?
     private weak var displayView: RFBDisplayView?
+    private(set) var activeNetwork: ActiveNetwork = .none
     private var runtime: RuntimePaths
     private var launchGeneration = 0
     private var cancelled = false
@@ -48,7 +55,7 @@ final class QEMUEngine: VMEngine {
     func start() {
         guard qemuProcess == nil, !state.isActive else { return }
         guard let toolchain = toolchainProvider() else {
-            state = .error("QEMU wurde nicht gefunden. Installiere es mit „brew install qemu swtpm“ und prüfe die Einstellungen von Pluralism.")
+            state = .error("QEMU wurde nicht gefunden. Diese Pluralism-Version enthält keine QEMU-Laufzeit. Lade die aktuelle Version oder hinterlege in den Einstellungen einen eigenen Pfad.")
             return
         }
         state = .starting
@@ -62,9 +69,21 @@ final class QEMUEngine: VMEngine {
         let media = makeMedia(config: config, bundle: bundle)
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            var startedRelay: PacketRelay?
             do {
-                let plan = try QEMUEngine.prepare(config: config, bundle: bundle, toolchain: toolchain,
-                                                  runtime: runtime, media: media)
+                try QEMUEngine.prepare(config: config, bundle: bundle, toolchain: toolchain, runtime: runtime)
+                let network = QEMUEngine.setupNetwork(config: config, runtime: runtime)
+                startedRelay = network.relay
+                let plan = try QEMUCommandBuilder.makePlan(config: config, bundle: bundle, toolchain: toolchain,
+                                                           runtime: runtime, media: media, network: network.backend)
+                DispatchQueue.main.async {
+                    guard let self, self.launchGeneration == generation else { return }
+                    self.relay = network.relay
+                    self.activeNetwork = network.active
+                    if let notice = network.notice {
+                        self.onNotice?(notice)
+                    }
+                }
                 // swtpm zuerst, QEMU verbindet sich beim Start mit dessen Socket.
                 var tpm: ManagedProcess?
                 if let tpmPlan = plan.swtpm {
@@ -121,7 +140,12 @@ final class QEMUEngine: VMEngine {
             } catch {
                 DispatchQueue.main.async {
                     // Wenn der QEMU-Prozess schon beendet ist, hat processDidExit den Fehler gemeldet.
-                    guard let self, self.launchGeneration == generation, self.state == .starting else { return }
+                    guard let self, self.launchGeneration == generation, self.state == .starting else {
+                        if let startedRelay {
+                            DispatchQueue.global().async { startedRelay.stop() }
+                        }
+                        return
+                    }
                     let logHint = QEMUEngine.lastLogLines(self.bundle.engineLogURL)
                     self.teardown()
                     var message = error.localizedDescription
@@ -139,9 +163,9 @@ final class QEMUEngine: VMEngine {
         cancelled || launchGeneration != generation
     }
 
-    /// Bereitet Ordner, UEFI-Variablen und Kommandozeile vor (Hintergrundthread).
+    /// Bereitet Ordner, Sockets, Hilfsplatte und UEFI-Variablen vor (Hintergrundthread).
     private static func prepare(config: VMConfiguration, bundle: VMBundle, toolchain: QEMUToolchain,
-                                runtime: RuntimePaths, media: QEMUMedia) throws -> QEMULaunchPlan {
+                                runtime: RuntimePaths) throws {
         let fm = FileManager.default
         try fm.createDirectory(at: bundle.logsDirectory, withIntermediateDirectories: true)
         try fm.createDirectory(at: bundle.tpmStateDirectory, withIntermediateDirectories: true)
@@ -150,15 +174,19 @@ final class QEMUEngine: VMEngine {
         try fm.createDirectory(at: runtime.directory, withIntermediateDirectories: true,
                                attributes: [.posixPermissions: 0o700])
         try? fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: runtime.directory.deletingLastPathComponent().path)
-        for socket in [runtime.qmpSocket, runtime.vncSocket, runtime.tpmSocket] {
+        for socket in [runtime.qmpSocket, runtime.vncSocket, runtime.tpmSocket, runtime.netGuestSocket, runtime.netHostSocket] {
             try? fm.removeItem(at: socket)
         }
 
         guard fm.fileExists(atPath: bundle.diskURL(for: config).path) else {
             throw PluralismError.message("Die Systemplatte fehlt: \(bundle.diskURL(for: config).path)")
         }
-        if let installer = media.installerISO, !fm.fileExists(atPath: installer) {
+        if config.media.attachInstaller, let installer = config.media.installerISOPath, !installer.isEmpty,
+           !fm.fileExists(atPath: installer) {
             throw QEMUPlanError.missingInstaller(installer)
+        }
+        if config.disk.migration == .driverPending, !fm.fileExists(atPath: bundle.virtioHelperDiskURL.path) {
+            try DiskImageService.createDisk(at: bundle.virtioHelperDiskURL, sizeGiB: 1, format: .raw, toolchain: nil)
         }
 
         // UEFI-Variablen aus der Vorlage kopieren (Homebrew-Dateien sind schreibgeschützt,
@@ -170,9 +198,40 @@ final class QEMUEngine: VMEngine {
             try fm.copyItem(atPath: firmware.varsTemplate, toPath: varsURL.path)
             try fm.setAttributes([.posixPermissions: 0o644], ofItemAtPath: varsURL.path)
         }
+    }
 
-        return try QEMUCommandBuilder.makePlan(config: config, bundle: bundle, toolchain: toolchain,
-                                               runtime: runtime, media: media)
+    struct NetworkSetup {
+        var backend: QEMUNetworkBackend
+        var relay: PacketRelay?
+        var active: ActiveNetwork
+        var notice: String?
+    }
+
+    /// Baut das vmnet-Netz und die Paketbrücke auf. Fällt bei Problemen auf das Usermode-Netz zurück.
+    private static func setupNetwork(config: VMConfiguration, runtime: RuntimePaths) -> NetworkSetup {
+        let fallbackForwards = QEMUCommandBuilder.allPortForwards(config)
+        switch config.network.mode {
+        case .none:
+            return NetworkSetup(backend: .none, relay: nil, active: .none, notice: nil)
+        case .nat, .hostOnly:
+            guard let addressing = config.network.addressing else {
+                return NetworkSetup(backend: .user(forwards: fallbackForwards), relay: nil, active: .fallback, notice: nil)
+            }
+            let mode: VMNetworkMode = config.network.mode == .nat ? .shared : .hostOnly
+            do {
+                let network = try VMNetwork(mode: mode, addressing: addressing, guestMAC: config.network.macAddress)
+                let relay = PacketRelay(network: network,
+                                        hostSocketPath: runtime.netHostSocket.path,
+                                        guestSocketPath: runtime.netGuestSocket.path)
+                try relay.start()
+                return NetworkSetup(backend: .vmnetRelay(guestSocket: runtime.netGuestSocket.path,
+                                                         hostSocket: runtime.netHostSocket.path),
+                                    relay: relay, active: .vmnet(addressing), notice: nil)
+            } catch {
+                let notice = "Schnelles Netzwerk (vmnet) nicht verfügbar: \(error.localizedDescription) Die VM nutzt das langsamere Ausweich-Netz."
+                return NetworkSetup(backend: .user(forwards: fallbackForwards), relay: nil, active: .fallback, notice: notice)
+            }
+        }
     }
 
     private func makeMedia(config: VMConfiguration, bundle: VMBundle) -> QEMUMedia {
@@ -250,6 +309,11 @@ final class QEMUEngine: VMEngine {
         qemuProcess = nil
         tpmProcess?.terminate()
         tpmProcess = nil
+        if let relay {
+            self.relay = nil
+            DispatchQueue.global(qos: .utility).async { relay.stop() }
+        }
+        activeNetwork = .none
     }
 
     // MARK: Steuerung

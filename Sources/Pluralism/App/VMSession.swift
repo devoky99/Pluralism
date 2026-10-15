@@ -13,9 +13,15 @@ final class VMSession: ObservableObject, Identifiable {
     @Published private(set) var snapshots: [SnapshotInfo] = []
     private(set) var engine: VMEngine
     private let toolchainProvider: () -> QEMUToolchain?
+    private var runningSince: Date?
 
     /// Meldet gespeicherte Änderungen an das AppModel.
     var onConfigurationSaved: ((VMConfiguration) -> Void)?
+    /// Vergibt ein freies eigenes Netz, wenn die VM noch keins hat.
+    var addressAllocator: (() -> GuestNetworkAddressing?)?
+
+    /// Mindestlaufzeit mit Hilfsplatte, damit Windows den virtio-Treiber sicher eingebunden hat.
+    static let migrationMinimumRuntime: TimeInterval = 120
 
     init(configuration: VMConfiguration, bundle: VMBundle, toolchainProvider: @escaping () -> QEMUToolchain?) {
         self.id = configuration.id
@@ -39,7 +45,7 @@ final class VMSession: ObservableObject, Identifiable {
 
     private func wireEngine() {
         engine.onStateChange = { [weak self] newState in
-            self?.state = newState
+            self?.handleStateChange(newState)
         }
         engine.onNotice = { [weak self] message in
             self?.notice = message
@@ -54,10 +60,69 @@ final class VMSession: ObservableObject, Identifiable {
         notice = nil
         var updated = configuration
         updated.lastStartedAt = Date()
+        if updated.network.mode != .none, updated.network.addressing == nil {
+            updated.network.addressing = addressAllocator?()
+        }
+        // Umstellung auf virtio abschließen: vorher Snapshot, dann Systemplatte umschalten.
+        if updated.disk.migration == .readyToSwitch {
+            do {
+                // Der Snapshot soll den NVMe-Stand ohne offene Umstellung enthalten.
+                var before = configuration
+                before.disk.migration = nil
+                try bundle.save(before)
+                try SnapshotService.create(bundle: bundle, config: before, name: "Vor der Umstellung auf virtio",
+                                           note: "Automatisch angelegt. Falls Windows nicht startet: wiederherstellen.")
+                reloadSnapshots()
+                updated.disk.bus = .virtio
+                updated.disk.migration = nil
+                try? FileManager.default.removeItem(at: bundle.virtioHelperDiskURL)
+                notice = "Die Systemplatte läuft jetzt über virtio. Ein Snapshot vom Stand davor liegt bereit."
+            } catch {
+                notice = "Umstellung verschoben, Snapshot fehlgeschlagen: \(error.localizedDescription)"
+            }
+        }
         try? bundle.save(updated)
         configuration = updated
+        onConfigurationSaved?(updated)
         engine.update(configuration: updated)
         engine.start()
+    }
+
+    /// Startet die Umstellung einer Windows-VM von NVMe auf die schnellere virtio-Platte.
+    /// Schritt 1: Beim nächsten Start hängt eine Hilfsplatte an, Windows bindet den Treiber.
+    /// Schritt 2: Nach einem Lauf von mindestens zwei Minuten schaltet der folgende Start um.
+    func beginVirtioMigration() throws {
+        var updated = configuration
+        guard updated.guestOS == .windows, updated.disk.bus == .nvme else { return }
+        updated.disk.migration = .driverPending
+        try apply(updated)
+        notice = "Starte Windows einmal normal, warte etwa zwei Minuten und fahre es herunter. Beim nächsten Start stellt Pluralism auf virtio um."
+    }
+
+    func cancelVirtioMigration() throws {
+        var updated = configuration
+        updated.disk.migration = nil
+        try apply(updated)
+        try? FileManager.default.removeItem(at: bundle.virtioHelperDiskURL)
+    }
+
+    private func handleStateChange(_ newState: VMRunState) {
+        let previous = state
+        state = newState
+        if newState == .running, runningSince == nil {
+            runningSince = Date()
+        }
+        if !newState.isActive, previous.isActive {
+            let ranFor = runningSince.map { Date().timeIntervalSince($0) } ?? 0
+            runningSince = nil
+            if configuration.disk.migration == .driverPending, newState == .stopped,
+               ranFor >= VMSession.migrationMinimumRuntime {
+                var updated = configuration
+                updated.disk.migration = .readyToSwitch
+                try? apply(updated)
+                notice = "Der Treiber ist vorbereitet. Beim nächsten Start stellt Pluralism die Systemplatte auf virtio um."
+            }
+        }
     }
 
     func shutdown() { engine.requestShutdown() }

@@ -1,13 +1,17 @@
-#!/bin/sh
-# Baut Pluralism.app aus dem Swift-Paket und signiert es ad hoc mit den nötigen
-# Entitlements (Virtualization.framework funktioniert so ohne Apple-Entwicklerkonto).
+#!/bin/bash
+# Baut Pluralism.app aus dem Swift-Paket, packt die QEMU-Laufzeit hinein und signiert alles ad hoc
+# mit den nötigen Entitlements (ohne bezahltes Apple-Entwicklerkonto).
 #
-# Aufruf:  ./scripts/build-app.sh            (Release-Build nach build/Pluralism.app)
-#          ./scripts/build-app.sh debug      (Debug-Build)
-set -eu
+# Aufruf:  ./scripts/build-app.sh            Release-Build nach build/Pluralism.app
+#          ./scripts/build-app.sh debug      Debug-Build
+#
+# Laufzeit: build/runtime (von scripts/runtime/build-runtime.sh) oder Pfad in PLURALISM_RUNTIME.
+# Ohne Laufzeit entsteht eine App, die QEMU aus Homebrew sucht (nur für Linux-VMs nicht nötig).
+set -euo pipefail
 
 CONFIG="${1:-release}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+RUNTIME="${PLURALISM_RUNTIME:-$ROOT/build/runtime}"
 cd "$ROOT"
 
 echo "==> swift build ($CONFIG)"
@@ -26,11 +30,32 @@ if [ -f "$ROOT/Resources/AppIcon.icns" ]; then
   /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string AppIcon" "$APP/Contents/Info.plist" 2>/dev/null || true
 fi
 
-echo "==> Ad-hoc signieren mit Entitlements"
-codesign --force --sign - --entitlements "$ROOT/Resources/Pluralism.entitlements" --timestamp=none "$APP"
-codesign --verify --verbose=2 "$APP"
+if [ -x "$RUNTIME/bin/qemu-system-aarch64" ]; then
+  echo "==> QEMU-Laufzeit einpacken ($RUNTIME)"
+  ditto "$RUNTIME" "$APP/Contents/Resources/Runtime"
+  echo "==> Laufzeit signieren"
+  find "$APP/Contents/Resources/Runtime/lib" -type f -name "*.dylib" -print0 | \
+    xargs -0 -n 20 codesign --force --sign - --timestamp=none
+  codesign --force --sign - --timestamp=none "$APP/Contents/Resources/Runtime/bin/qemu-img"
+  codesign --force --sign - --timestamp=none "$APP/Contents/Resources/Runtime/bin/swtpm"
+  codesign --force --sign - --timestamp=none \
+    --entitlements "$ROOT/Resources/QEMU.entitlements" \
+    "$APP/Contents/Resources/Runtime/bin/qemu-system-aarch64"
+else
+  echo "==> Hinweis: keine QEMU-Laufzeit unter $RUNTIME, die App sucht QEMU dann in Homebrew"
+fi
+
+echo "==> App ad hoc signieren"
+codesign --force --sign - --timestamp=none --entitlements "$ROOT/Resources/Pluralism.entitlements" "$APP"
+codesign --verify --strict --verbose=2 "$APP"
 codesign -d --entitlements - "$APP" 2>/dev/null | grep -q "com.apple.security.virtualization" \
   && echo "    Entitlement com.apple.security.virtualization ist gesetzt."
+if [ -x "$APP/Contents/Resources/Runtime/bin/qemu-system-aarch64" ]; then
+  codesign -d --entitlements - "$APP/Contents/Resources/Runtime/bin/qemu-system-aarch64" 2>/dev/null \
+    | grep -q "com.apple.security.hypervisor" && echo "    QEMU hat das Hypervisor-Entitlement."
+  "$APP/Contents/Resources/Runtime/bin/qemu-system-aarch64" -version | head -1
+fi
 
+du -sh "$APP"
 echo "==> Fertig: $APP"
 echo "    Starten mit: open \"$APP\""

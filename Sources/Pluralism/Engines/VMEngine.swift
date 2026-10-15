@@ -42,11 +42,35 @@ enum VMRunState: Equatable {
     }
 }
 
+/// Welches Netz eine laufende VM tatsächlich nutzt.
+enum ActiveNetwork: Equatable {
+    case none
+    /// Eigenes vmnet-Netz, Gast unter fester Adresse vom Mac erreichbar.
+    case vmnet(GuestNetworkAddressing)
+    /// Ausweichweg: QEMU-Usermode-Netz bzw. Apples einfaches NAT.
+    case fallback
+
+    var description: String {
+        switch self {
+        case .none: return "kein Netzwerk"
+        case .vmnet(let addressing): return "vmnet, Adresse \(addressing.guestAddress)"
+        case .fallback: return "Ausweich-Netz"
+        }
+    }
+
+    var guestAddress: String? {
+        if case .vmnet(let addressing) = self { return addressing.guestAddress }
+        return nil
+    }
+}
+
 /// Gemeinsame Schnittstelle der beiden Engines.
 /// Alle Methoden werden auf dem Hauptthread aufgerufen, `onStateChange` meldet ebenfalls
 /// auf dem Hauptthread.
 protocol VMEngine: AnyObject {
     var state: VMRunState { get }
+    /// Netz der laufenden VM (für die Anzeige).
+    var activeNetwork: ActiveNetwork { get }
     var onStateChange: ((VMRunState) -> Void)? { get set }
     /// Hinweise für die Oberfläche (z. B. "Gesicherter Zustand war ungültig").
     var onNotice: ((String) -> Void)? { get set }

@@ -34,6 +34,8 @@ public struct VMBundle: Equatable, Hashable, Sendable {
     public var logsDirectory: URL { url.appendingPathComponent("logs", isDirectory: true) }
     public var snapshotsDirectory: URL { url.appendingPathComponent("snapshots", isDirectory: true) }
     public var unattendISOURL: URL { url.appendingPathComponent("unattend.iso") }
+    /// Kleine leere Platte für die Umstellung einer Windows-VM von NVMe auf virtio.
+    public var virtioHelperDiskURL: URL { url.appendingPathComponent("virtio-helper.img") }
 
     public var serialLogURL: URL { logsDirectory.appendingPathComponent("serial.log") }
     public var engineLogURL: URL { logsDirectory.appendingPathComponent("engine.log") }
@@ -69,10 +71,14 @@ public struct RuntimePaths: Equatable, Sendable {
     public var qmpSocket: URL { directory.appendingPathComponent("qmp.sock") }
     public var vncSocket: URL { directory.appendingPathComponent("vnc.sock") }
     public var tpmSocket: URL { directory.appendingPathComponent("tpm.sock") }
+    /// Netzwerk-Paketbrücke: QEMU bindet diesen Socket ...
+    public var netGuestSocket: URL { directory.appendingPathComponent("net-q.sock") }
+    /// ... und sendet an diesen, den Pluralism bindet.
+    public var netHostSocket: URL { directory.appendingPathComponent("net-h.sock") }
 
     /// Alle Socket-Pfade sind kurz genug für sockaddr_un.
     public var allSocketPathsFit: Bool {
-        [qmpSocket, vncSocket, tpmSocket].allSatisfy { $0.path.utf8.count < 104 }
+        [qmpSocket, vncSocket, tpmSocket, netGuestSocket, netHostSocket].allSatisfy { $0.path.utf8.count < 104 }
     }
 }
 
