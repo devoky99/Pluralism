@@ -1,0 +1,89 @@
+QEMU emulator version 11.1.2
+Copyright (c) 2003-2026 Fabrice Bellard and the QEMU Project developers
+qemu-img version 11.1.2
+TPM emulator version 0.10.2, Copyright (c) 2014-2022 IBM Corp. and others
+build/runtime/bin/qemu-system-aarch64:
+	/System/Library/Frameworks/Hypervisor.framework/Versions/A/Hypervisor (compatibility version 1.0.0, current version 308.1.7)
+	/usr/lib/libz.1.dylib (compatibility version 1.0.0, current version 1.2.12)
+	@executable_path/../lib/libpixman-1.0.dylib (compatibility version 0.0.0, current version 0.0.0)
+	/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo (compatibility version 1.2.0, current version 758.27.0)
+	/System/Library/Frameworks/QuartzCore.framework/Versions/A/QuartzCore (compatibility version 1.2.0, current version 1223.2.2)
+	@executable_path/../lib/libslirp.0.dylib (compatibility version 0.0.0, current version 0.0.0)
+	@executable_path/../lib/libglib-2.0.0.dylib (compatibility version 9001.0.0, current version 9001.1.0)
+	/System/Library/Frameworks/vmnet.framework/Versions/A/vmnet (compatibility version 1.0.0, current version 1.0.0)
+	/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation (compatibility version 150.0.0, current version 5027.0.69)
+	/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit (compatibility version 1.0.0, current version 275.0.0)
+	/System/Library/Frameworks/CoreAudio.framework/Versions/A/CoreAudio (compatibility version 1.0.0, current version 1.0.0)
+	/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1359.0.0)
+	/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit (compatibility version 45.0.0, current version 2775.10.103)
+	/System/Library/Frameworks/ApplicationServices.framework/Versions/A/ApplicationServices (compatibility version 1.0.0, current version 66.0.0)
+	/System/Library/Frameworks/CoreGraphics.framework/Versions/A/CoreGraphics (compatibility version 64.0.0, current version 2050.0.0)
+	/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation (compatibility version 300.0.0, current version 5027.0.69)
+	/usr/lib/libobjc.A.dylib (compatibility version 1.0.0, current version 228.0.0)
+{
+  "qemu": "11.1.2",
+  "swtpm": "0.10.2_1",
+  "libraries": [
+    {
+      "file": "libcrypto.4.dylib",
+      "formula": "openssl@4",
+      "version": "4.0.3"
+    },
+    {
+      "file": "libgio-2.0.0.dylib",
+      "formula": "glib",
+      "version": "2.90.1"
+    },
+    {
+      "file": "libglib-2.0.0.dylib",
+      "formula": "glib",
+      "version": "2.90.1"
+    },
+    {
+      "file": "libgmodule-2.0.0.dylib",
+      "formula": "glib",
+      "version": "2.90.1"
+    },
+    {
+      "file": "libgobject-2.0.0.dylib",
+      "formula": "glib",
+      "version": "2.90.1"
+    },
+    {
+      "file": "libintl.8.dylib",
+      "formula": "gettext",
+      "version": "1.0"
+    },
+    {
+      "file": "libjson-glib-1.0.0.dylib",
+      "formula": "json-glib",
+      "version": "1.10.8"
+    },
+    {
+      "file": "libpcre2-8.0.dylib",
+      "formula": "pcre2",
+      "version": "10.49"
+    },
+    {
+      "file": "libpixman-1.0.dylib",
+      "formula": "pixman",
+      "version": "0.46.4"
+    },
+    {
+      "file": "libslirp.0.dylib",
+      "formula": "libslirp",
+      "version": "4.9.5"
+    },
+    {
+      "file": "libswtpm_libtpms.0.dylib",
+      "formula": "swtpm",
+      "version": "0.10.2_1"
+    },
+    {
+      "file": "libtpms.0.dylib",
+      "formula": "libtpms",
+      "version": "0.10.2_1"
+    }
+  ],
+  "source": "https://github.com/devoky99/Pluralism/tree/main/scripts/runtime"
+}177M	build/runtime
