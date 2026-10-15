@@ -18,6 +18,17 @@ die virtuelle Grafikkarte (Peripherie), Netzwerk über virtuelle Netzwerkkarten.
 Die Zahlen stammen aus Berichten mit denselben Bausteinen, nicht aus eigenen Messungen. Deshalb beginnt der Plan
 mit einer Messbasis.
 
+## Stand 15. Oktober 2026 (Version 0.2)
+
+| Phase | Status |
+|---|---|
+| A Messbasis | offen, braucht den verbundenen Mac |
+| B Platte Windows | **umgesetzt**: virtio-blk mit I/O-Thread, Rohformat, Treiber über `$WinPEDriver$`, Umstellung älterer VMs; Messung steht aus |
+| C Netzwerk | **umgesetzt**: eigenes vmnet-Netz pro VM, Paketbrücke für QEMU, feste Adressen, Modi; Messung steht aus |
+| D 3D | offen |
+| E Eigener Kern | offen |
+| Zusatz | QEMU und swtpm sind in der App enthalten, Zielsystem macOS 27 |
+
 ## Reihenfolge auf einen Blick
 
 | Phase | Inhalt | Aufwand | Ergebnis |

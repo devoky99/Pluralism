@@ -82,7 +82,7 @@ echo "==> Selbsttest"
 for device in virtio-blk-pci nvme virtio-net-pci ramfb qemu-xhci usb-storage tpm-tis-device; do
   grep -q "name \"$device\"" "$WORK/devices.txt" || { echo "Gerät fehlt: $device"; exit 1; }
 done
-"$OUT/bin/qemu-system-aarch64" -netdev help | grep -q dgram || { echo "netdev dgram fehlt"; exit 1; }
-"$OUT/bin/qemu-system-aarch64" -accel help | grep -q hvf || { echo "hvf fehlt"; exit 1; }
+"$OUT/bin/qemu-system-aarch64" -machine none -netdev help | grep -q dgram || { echo "netdev dgram fehlt"; exit 1; }
+"$OUT/bin/qemu-system-aarch64" -machine none -accel help | grep -q hvf || { echo "hvf fehlt"; exit 1; }
 du -sh "$OUT"
 echo "==> Fertig: $OUT"

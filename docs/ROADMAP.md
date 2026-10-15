@@ -19,17 +19,26 @@ Leistung und Verwaltung.
 - [x] Snapshots per APFS-Klon, Logs, Ressourcenempfehlung für den M4 Pro
 - [x] Tests für den Kern, CI für Linux und macOS
 
-## 0.2: Netzwerk
+## Stand 0.2 (erledigt)
+
+- [x] QEMU 11.1.2 und swtpm in der App (aus dem Quellcode gebaut, Bibliotheken gebündelt, ohne Homebrew)
+- [x] Zielsystem macOS 27, Build auf Xcode 27
+- [x] Windows-Systemplatte als virtio-blk mit eigenem I/O-Thread, Rohformat, Treiber schon im Setup
+- [x] Umstellung älterer Windows-VMs von NVMe auf virtio mit Hilfsplatte und automatischem Snapshot
+- [x] Eigenes vmnet-Netz pro VM mit fester Adresse, Modi „Internet und Mac“, „Nur Mac“, „Kein Netzwerk“
+- [x] Windows-Netz über Paketbrücke QEMU ↔ vmnet, Linux über `VZVmnetNetworkDeviceAttachment`
+- [x] Netzwerk-Prüfprogramm in der CI (vmnet ohne Root, DHCP-Reservierung)
+- [x] Linux-Platten standardmäßig ASIF
+
+## 0.3: Netzwerk, Rest
 
 | Aufgabe | Aufwand | Weg |
 |---|---|---|
-| Portweiterleitung für Linux-VMs | M | macOS 26: `VZVmnetNetworkDeviceAttachment` mit vmnet-Portregeln |
-| Feste IP-Adressen | S | vmnet-DHCP-Reservierungen (macOS 26) |
-| Netzwerkmodi wählbar | M | „Nur Internet“, „Nur Mac“ (host-only), „Abgeschottet“ (kein Netz) über vmnet |
-| Netz zwischen VMs | M | gemeinsames vmnet-Netz für mehrere VMs, auf Wunsch ohne Internet |
+| Netz zwischen VMs | M | gemeinsames vmnet-Netz für ausgewählte VMs, auf Wunsch ohne Internet |
+| Portweiterleitung auf dem Mac | S | vmnet-Portregeln (über Loopback ab macOS 27), nur falls direkter Zugriff auf die Adresse nicht reicht |
 | Bridged-Netz | – | braucht `com.apple.vm.networking` von Apple; nur mit Freigabe möglich |
 
-## 0.3: Peripherie
+## 0.4: Peripherie
 
 | Aufgabe | Aufwand | Weg |
 |---|---|---|
@@ -40,19 +49,19 @@ Leistung und Verwaltung.
 | Mehrere Bildschirme | M | mehrere Scanouts (Apple) bzw. mehrere virtio-gpu-Ausgänge (QEMU) |
 | Mikrofon für Windows | M | QEMUs CoreAudio kann keine Aufnahme; eigener Audio-Backend-Weg nötig |
 
-## 0.4: Verwaltung und Sicherheit
+## 0.5: Verwaltung und Sicherheit
 
 | Aufgabe | Aufwand | Weg |
 |---|---|---|
 | Echtes TPM 2.0 | M | Eigener QEMU-Build mit CRB-TPM-Patch (`tpm-crb-device`) und Secure-Boot-Firmware |
 | Secure Boot für Linux | S | macOS 27 `VZEFIVariableStore.enrollDefaultSecureBootSignatures()` |
-| Snapshots im laufenden Betrieb (Windows) | M | QMP `snapshot-save` / `snapshot-load` für qcow2 |
+| Snapshots im laufenden Betrieb (Windows) | M | QMP `snapshot-save` / `snapshot-load` (braucht qcow2 oder Zustand separat) |
 | Geschichtete Platten | M | macOS 27 DiskImageKit: Basis plus Overlays, schnelle Klone und Rollback |
 | Verschlüsselte VMs | M | VM-Ordner in verschlüsseltem APFS-Image |
 | Linux unbeaufsichtigt installieren | M | cloud-init (NoCloud, Laufwerk `CIDATA`) mit Cloud-Images, Ubuntu-Autoinstall |
 | Kommandozeile `pluralismctl` | S | list, start, stop, status |
 
-## 0.5: Grafik
+## 0.6: Grafik
 
 | Aufgabe | Aufwand | Weg |
 |---|---|---|
