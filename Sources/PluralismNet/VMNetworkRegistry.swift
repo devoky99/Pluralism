@@ -35,11 +35,12 @@ public final class VMNetworkRegistry: @unchecked Sendable {
         }
         do {
             return (try network(mode: mode, guestMAC: guestMAC, subnet: fixedHostAddress), nil)
-        } catch let fixedError {
+        } catch {
             let network = try network(mode: mode, guestMAC: guestMAC, subnet: nil)
+            let fixed = VMNetwork.bytes(fixedHostAddress).map { "\($0[0]).\($0[1]).\($0[2]).0/24" } ?? fixedHostAddress
             let range = network.addressing?.description ?? "einem anderen Bereich"
-            let notice = "Der feste Adressbereich der VM ist gerade belegt (\(fixedError.localizedDescription)). "
-                + "Die VM bekommt diesmal eine Adresse aus \(range)."
+            let notice = "Der feste Adressbereich \(fixed) ist gerade belegt (z. B. nach Ändern der MAC-Adresse). "
+                + "Die VM bekommt diesmal eine Adresse aus \(range). Nach einem Neustart von Pluralism gilt wieder die feste Adresse."
             return (network, notice)
         }
     }

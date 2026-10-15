@@ -77,16 +77,30 @@ Nur Foundation, kompiliert auch unter Linux.
 | `RFB/KeyboardMapping.swift` | Mac-Keycodes zu PC-Scancodes, inklusive ISO-Tausch für deutsche Tastaturen |
 | `Windows/UnattendBuilder.swift` | `autounattend.xml` und `pluralism-setup.cmd` für die automatische Windows-Installation |
 | `Network/DHCPProbe.swift` | DHCP-Discover als Ethernet-Rahmen bauen und Antworten auswerten (für `pluralism-netcheck`) |
+| `Network/FixedSubnet.swift` | Feste Adressbereiche: Platz 0 bis 39, „Internet und Mac“ 192.168.160+x, „Nur Mac“ 192.168.200+x |
+| `Network/GuestAddressWatcher.swift` | Erkennt die tatsächliche IPv4-Adresse des Gasts an seinen eigenen Rahmen (IPv4, ARP) |
 
 ### PluralismNet (macOS, vmnet)
 
 | Datei | Aufgabe |
 |---|---|
-| `VMNetwork.swift` | Eigenes vmnet-Netz pro VM: Modus, Adressbereich 192.168.x.0/24, DHCP-Reservierung für die MAC des Gasts |
-| `PacketRelay.swift` | Paketbrücke QEMU ↔ vmnet: Unix-Datagramm-Socket auf der einen Seite, `vmnet_read`/`vmnet_write` gebündelt auf der anderen |
+| `VMNetwork.swift` | Ein vmnet-Netz: Modus, fester Bereich /24 (oder von vmnet gewählt), DHCP-Reservierung der .2 für die MAC des Gasts |
+| `VMNetworkRegistry.swift` | Hält die Netze, solange Pluralism läuft, damit eine VM beim Neustart dasselbe Netz bekommt; Ausweichbereich, wenn der feste belegt ist |
+| `PacketRelay.swift` | Paketbrücke QEMU ↔ vmnet: Unix-Datagramm-Socket auf der einen Seite, `vmnet_read`/`vmnet_write` gebündelt auf der anderen; meldet die Adresse, die der Gast benutzt |
 
-`pluralism-netcheck` nutzt beides ohne VM: Netz anlegen, Brücke starten, als „Gast“ ein DHCP-Discover senden,
-reservierte Adresse prüfen. Die CI führt das auf einem macOS-27-Runner ohne Root aus.
+`pluralism-netcheck` nutzt das ohne VM: Netz anlegen, Brücke starten, als „Gast“ ein DHCP-Discover senden,
+Adresse prüfen. Die CI führt das bei jedem Push auf einem macOS-27-Runner ohne Root aus.
+
+#### vmnet auf macOS 27: was die Prüfung ergeben hat
+
+| Frage | Ergebnis |
+|---|---|
+| Root nötig? | Nein. Nötig ist das Entitlement `com.apple.security.virtualization` (ohne: Code 1002 beim Anlegen). Die App hat es. |
+| Eigener Bereich | Geht, wenn die Adresse des Macs (.1) übergeben wird. Mit der Netzadresse (.0) startet die Schnittstelle nicht (Code 1001). |
+| Ohne eigenen Bereich | vmnet vergibt 192.168.64.0/24, dann .65, .66 … („Nur Mac“ ab 192.168.128.0/24), bei jedem neuen Netz den nächsten. |
+| DHCP-Reservierung | Funktioniert innerhalb des Bereichs. Außerhalb wird sie still ignoriert. |
+| Bereich wieder frei? | Erst wenn der Prozess endet. Im selben Prozess scheitert ein zweites Netz mit demselben Bereich (Code 1001). Daher `VMNetworkRegistry`. |
+| Mehrere Netze gleichzeitig | Ja, jedes mit eigenem Bereich. |
 
 ### Pluralism (macOS-App)
 
@@ -124,7 +138,7 @@ Unix-Sockets liegen unter `/tmp/pluralism-<uid>/<kurz-ID>/` (Rechte 0700), weil 
 
 - `VZEFIBootLoader` mit eigenem Variablenspeicher, `VZGenericPlatformConfiguration` mit gespeicherter Kennung
 - Systemplatte als virtio-blk, ISO als USB-Massenspeicher
-- `VZVmnetNetworkDeviceAttachment` mit eigenem vmnet-Netz (feste Adresse .2, Mac ist .1);
+- `VZVmnetNetworkDeviceAttachment` mit eigenem vmnet-Netz (fester Bereich, Gast .2, Mac .1);
   Ausweichweg `VZNATNetworkDeviceAttachment`
 - `VZVirtioGraphicsDeviceConfiguration` mit `automaticallyReconfiguresDisplay`
 - USB-Tastatur, USB-Zeigegerät mit absoluten Koordinaten
@@ -182,8 +196,8 @@ Warum so:
 - **Netzwerk über vmnet:** QEMU schickt jeden Ethernet-Rahmen als Datagramm an Pluralism (`-netdev dgram`),
   Pluralism reicht ihn gebündelt an ein eigenes vmnet-Netz weiter (`PacketRelay`). Die neue vmnet-Schnittstelle
   aus macOS 26 (`vmnet_network_create`, `vmnet_interface_start_with_network`) braucht dafür weder Root noch das
-  Entitlement `com.apple.vm.networking`, solange die App nicht in der Sandbox läuft. Windows bekommt per
-  DHCP-Reservierung immer dieselbe Adresse und ist vom Mac direkt erreichbar.
+  Entitlement `com.apple.vm.networking`, wohl aber `com.apple.security.virtualization`. Windows bekommt per
+  DHCP-Reservierung immer dieselbe Adresse (z. B. 192.168.160.2) und ist vom Mac direkt erreichbar.
 - **Ausweich-Netz:** Schlägt vmnet fehl, nutzt QEMU sein Usermode-Netz (slirp). Der Mac erreicht Windows dann
   nur über ausdrücklich eingerichtete Portweiterleitungen auf 127.0.0.1.
 
@@ -234,7 +248,7 @@ Das Passwort steht nur im Setup-ISO, nicht in `config.json`.
 
 `scripts/build-app.sh` signiert ad hoc (`codesign -s -`) mit:
 
-- `com.apple.security.virtualization` (VZ, funktioniert ad hoc)
+- `com.apple.security.virtualization` (VZ und vmnet ohne Root, funktioniert ad hoc)
 - `com.apple.security.hypervisor` (für den späteren eigenen VMM; das mitgelieferte QEMU trägt es selbst)
 - `com.apple.security.device.audio-input` (Mikrofon, nur wenn in der VM eingeschaltet)
 

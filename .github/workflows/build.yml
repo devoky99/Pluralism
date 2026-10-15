@@ -151,8 +151,8 @@ jobs:
             run "F dreimal ohne festen Bereich (App)"         --app --cycles 3
             run "G fester Bereich belegt, Ausweg (App)"       --app --subnet 192.168.162.1 --block
             run "H zwei andere VMs laufen (App)"              --app --subnet 192.168.163.1 --others 2
-            run "I fester Bereich mit Netzadresse .0"         --subnet 192.168.96.0
-            run "J fester Bereich neu anlegen im selben Prozess" --subnet 192.168.98.1 --cycles 2
+            run "I fester Bereich mit .0 (erwartet: Fehler)"   --subnet 192.168.96.0
+            run "J gleicher Bereich zweimal im selben Prozess (erwartet: Fehler)" --subnet 192.168.98.1 --cycles 2
             BIN="$PLAIN"; run "K ohne Entitlement"
           } 2>&1 | tee "$RUNNER_TEMP/logs/25-netcheck.log"
       - name: App-Bundle bauen und signieren

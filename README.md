@@ -32,7 +32,7 @@ Plan: [docs/ROADMAP.md](docs/ROADMAP.md). Recherche: [docs/research/](docs/resea
 - VM-Bibliothek mit Assistent für neue VMs, Einstellungen, Klonen (APFS-Klon) und Papierkorb
 - Ressourcenempfehlung passend zum Mac (M4 Pro: Linux 4 Kerne/8 GB, Windows 6 Kerne/12 GB)
 - **QEMU ist in der App enthalten** (Version 11.1.2, nur ARM64, mit swtpm). Homebrew ist nicht nötig.
-- **Netzwerk über Apples vmnet:** jede VM hat ihr eigenes Netz mit fester Adresse (z. B. 192.168.120.2),
+- **Netzwerk über Apples vmnet:** jede VM hat ihr eigenes Netz mit fester Adresse (z. B. 192.168.160.2),
   wählbar „Internet und Mac“, „Nur Mac“ oder „Kein Netzwerk“. Kein Root, keine Sonderrechte.
 - **Linux:** UEFI-Start vom ISO, virtio-Platte im ASIF-Format, virtio-gpu mit automatischer Auflösung,
   Ton und Mikrofon (optional), verschachtelte Virtualisierung, Zustand sichern und fortsetzen,

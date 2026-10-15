@@ -27,7 +27,8 @@ Leistung und Verwaltung.
 - [x] Umstellung älterer Windows-VMs von NVMe auf virtio mit Hilfsplatte und automatischem Snapshot
 - [x] Eigenes vmnet-Netz pro VM mit fester Adresse, Modi „Internet und Mac“, „Nur Mac“, „Kein Netzwerk“
 - [x] Windows-Netz über Paketbrücke QEMU ↔ vmnet, Linux über `VZVmnetNetworkDeviceAttachment`
-- [x] Netzwerk-Prüfprogramm in der CI (vmnet ohne Root, DHCP-Reservierung)
+- [x] Netzwerk-Prüfprogramm in der CI (vmnet ohne Root, fester Bereich, DHCP-Reservierung, Neustarts, Ausweichbereich)
+- [x] Adresse des Gasts wird an seinen Rahmen erkannt und angezeigt (ohne Gastagent)
 - [x] Linux-Platten standardmäßig ASIF
 
 ## 0.3: Netzwerk, Rest
