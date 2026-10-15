@@ -1,5 +1,7 @@
 # Pluralism
 
+<img src="docs/icon/Pluralism-Icon-1024.png" alt="App-Icon von Pluralism: Husky aus Papierflächen unter Polarlicht, ein Auge eisblau, eins bernsteinfarben" width="160">
+
 Eigene Virtualisierungs-App für Macs mit Apple Silicon, gebaut als Alternative zu Parallels Desktop.
 Zielrechner: MacBook Pro 14" mit M4 Pro (8 Performance- und 4 Effizienz-Kerne, 48 GB).
 
@@ -64,6 +66,9 @@ open build/Pluralism.app
 bündelt alle Bibliotheken mit relativen Pfaden. `build-app.sh` packt das nach
 `Pluralism.app/Contents/Resources/Runtime` und signiert ad hoc: die App mit `com.apple.security.virtualization`,
 QEMU mit `com.apple.security.hypervisor`. Ein bezahltes Apple-Entwicklerkonto ist nicht nötig.
+
+Das App-Icon liegt als SVG unter [docs/icon/](docs/icon/). `python3 scripts/icon/make-icon.py` erzeugt daraus
+`Resources/AppIcon.icns` (alle Größen von 16 bis 1024 Pixel), die `build-app.sh` ins Bundle übernimmt.
 
 Jeder Push baut die App außerdem per GitHub Actions auf einem Apple-Silicon-Runner. Das fertige Bundle liegt
 dort als Artefakt `Pluralism-app`. Eine aus dem Netz geladene, ad hoc signierte App blockiert macOS zunächst;
