@@ -170,6 +170,19 @@ public enum Packets {
         return message
     }
 
+    /// Antwort auf eine ICMP-Echo-Anfrage (gleiche Kennung, Folge und Nutzdaten), sonst nil.
+    public static func icmpEchoReply(to packet: IPv4) -> [UInt8]? {
+        guard packet.proto == IPProtocol.icmp.rawValue, packet.payload.count >= 8, packet.payload[0] == 8 else { return nil }
+        var message = packet.payload
+        message[0] = 0
+        message[2] = 0
+        message[3] = 0
+        let sum = DHCPProbe.checksum(message)
+        message[2] = UInt8(sum >> 8)
+        message[3] = UInt8(sum & 0xFF)
+        return message
+    }
+
     /// Kennung einer ICMP-Echo-Antwort, sonst nil.
     public static func icmpEchoReplyIdentifier(_ packet: IPv4) -> UInt16? {
         guard packet.proto == IPProtocol.icmp.rawValue, packet.payload.count >= 8, packet.payload[0] == 0 else { return nil }

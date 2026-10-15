@@ -210,6 +210,10 @@ final class NetworkTests: XCTestCase {
         reply[0] = 0
         XCTAssertEqual(Packets.icmpEchoReplyIdentifier(Packets.IPv4(source: [1, 1, 1, 1], destination: [10, 0, 0, 2], proto: 1, payload: reply)), 0x1234)
         XCTAssertNil(Packets.icmpEchoReplyIdentifier(Packets.IPv4(source: [1, 1, 1, 1], destination: [10, 0, 0, 2], proto: 1, payload: echo)))
+        let answer = Packets.icmpEchoReply(to: Packets.IPv4(source: [10, 0, 0, 1], destination: [10, 0, 0, 2], proto: 1, payload: echo))
+        XCTAssertEqual(answer.map { DHCPProbe.checksum($0) }, 0)
+        XCTAssertEqual(answer.map { Array($0[4...]) }, Array(echo[4...]))
+        XCTAssertEqual(answer?.first, 0)
 
         let query = Packets.dnsQuery(identifier: 0xBEEF, name: "apple.com")
         XCTAssertEqual(Array(query[12...]), [5] + Array("apple".utf8) + [3] + Array("com".utf8) + [0, 0, 1, 0, 1])

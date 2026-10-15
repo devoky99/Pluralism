@@ -8,8 +8,7 @@ import PluralismNet
 // Ablauf wie bei einer QEMU-VM: vmnet-Netz anlegen, Paketbrücke starten, dann selbst den Gast
 // spielen. Der „Gast“ verbindet sich wie QEMU (-netdev stream) mit der Brücke und prüft:
 // DHCP (Angebot und Bestätigung), Gateway per ARP, Namensauflösung über das Gateway,
-// TCP-Verbindungsaufbau und Ping ins Internet, Mac -> VM und VM -> Mac per UDP, und wie viele
-// Rahmen bei einem Lastschub ankommen, während der Gast kurz nicht liest.
+// TCP-Verbindungsaufbau und Ping ins Internet, Mac -> VM (UDP und /sbin/ping) und VM -> Mac per UDP.
 //
 // Aufruf: pluralism-netcheck [--host-only] [--subnet A.B.C.D] [--no-reservation] [--app]
 //                            [--others N] [--cycles N] [--pause S] [--block] [--legacy] [--quick]
@@ -19,7 +18,7 @@ import PluralismNet
 // --cycles:  N-mal hintereinander anlegen, prüfen, freigeben (VM mehrmals starten)
 // --block:   den festen Bereich vorher selbst belegen (Ausweichweg prüfen)
 // --legacy:  nur die alte vmnet-Schnittstelle prüfen, die QEMUs eigene vmnet-Netdevs nutzen
-// --quick:   nur DHCP, ohne Internet- und Lasttests
+// --quick:   nur DHCP und ARP, ohne Internet- und Mac-Tests
 // --qemu P:  echtes QEMU (Pfad P) mit dem -netdev-Argument von Pluralism an die Brücke hängen
 // --qemu-vmnet P: echtes QEMU legt das Netz selbst an (-netdev vmnet-shared/-host wie UTM)
 // Ausgabe: eine JSON-Zeile, Exit-Code 0 bei Erfolg.
@@ -104,6 +103,7 @@ final class SimulatedGuest {
     var ip: [UInt8]?
     private var decoder = StreamFrameDecoder()
     private var pending: [[UInt8]] = []
+    private(set) var pingsAnswered = 0
 
     init(socketPath: String, mac: [UInt8]) throws {
         fd = try UnixStream.connect(socketPath)
@@ -140,6 +140,13 @@ final class SimulatedGuest {
             guard let frame = receive(timeout: deadline.timeIntervalSinceNow) else { return nil }
             if let ip, let arp = Packets.parseARP(frame), arp.operation == 1, arp.targetIP == ip {
                 send(Packets.arpReply(senderMAC: mac, senderIP: ip, targetMAC: arp.senderMAC, targetIP: arp.senderIP))
+            }
+            // Ping beantworten wie ein echter Gast
+            if let ip, let packet = Packets.parseIPv4(frame), packet.destination == ip,
+               let reply = Packets.icmpEchoReply(to: packet), frame.count >= 12 {
+                let packetBytes = Packets.ipv4(source: ip, destination: packet.source, proto: .icmp, payload: reply)
+                send(Packets.ethernet(destination: Array(frame[6..<12]), source: mac, type: 0x0800, payload: packetBytes))
+                pingsAnswered += 1
             }
             if let result = match(frame) {
                 return result
@@ -392,24 +399,22 @@ func runOnce(options: Options, mode: VMNetworkMode, tag: String) -> ([String: An
     fields["vmToMac"] = hostReceive(listener, timeout: 3) != nil
     close(listener)
 
-    // Lastschub: 2000 Rahmen vom Mac an die VM, während der Gast 0,5 s nicht liest
-    let burstPort = UInt16.random(in: 40000...60000)
-    let burstSocket = hostUDPSocket(bindPort: nil)
-    let payload = [UInt8](repeating: 0x5A, count: 1400)
-    var sent = 0
-    for _ in 0..<2000 where hostSend(burstSocket, to: offered, port: burstPort, payload).ok {
-        sent += 1
+    // Mac -> VM mit /sbin/ping (Programm von Apple). Gelingt das, während das eigene Prüfprogramm
+    // „No route to host“ bekommt, blockiert macOS das Prüfprogramm über „Lokales Netzwerk“.
+    let ping = Process()
+    ping.executableURL = URL(fileURLWithPath: "/sbin/ping")
+    ping.arguments = ["-c", "2", "-t", "4", Packets.dotted(offered)]
+    let pingPipe = Pipe()
+    ping.standardOutput = pingPipe
+    ping.standardError = pingPipe
+    if (try? ping.run()) != nil {
+        _ = guest.wait(timeout: 5) { _ -> Bool? in ping.isRunning ? nil : true }
+        ping.waitUntilExit()
+        fields["macPing"] = ping.terminationStatus == 0
+        fields["pingsAnswered"] = guest.pingsAnswered
+        let text = String(decoding: pingPipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        fields["macPingOutput"] = text.split(separator: "\n").filter { $0.contains("transmitted") || $0.contains("ping:") }.joined(separator: " | ")
     }
-    close(burstSocket)
-    Thread.sleep(forTimeInterval: 0.5)
-    var received = 0
-    while guest.wait(timeout: 1.0, { frame -> Bool? in
-        guard let packet = Packets.parseIPv4(frame), let udp = Packets.parseUDP(packet), udp.destinationPort == burstPort else { return nil }
-        return true
-    }) != nil {
-        received += 1
-    }
-    fields["burst"] = "\(received) von \(sent)"
 
     return finish("done", matches ? 0 : 6)
 }
