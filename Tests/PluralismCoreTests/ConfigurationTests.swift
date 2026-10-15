@@ -195,6 +195,32 @@ final class ConfigurationTests: XCTestCase {
         XCTAssertNil(GuestNetworkAddressing.from(network: [1, 2, 3, 4], mask: [255, 255, 255, 255]))
     }
 
+    func testFixedSubnet() {
+        XCTAssertEqual(FixedSubnet.hostAddress(slot: 0, mode: .nat), "192.168.160.1")
+        XCTAssertEqual(FixedSubnet.hostAddress(slot: 39, mode: .hostOnly), "192.168.239.1")
+        XCTAssertNil(FixedSubnet.hostAddress(slot: 3, mode: .none))
+        XCTAssertNil(FixedSubnet.hostAddress(slot: 40, mode: .nat))
+        XCTAssertNil(FixedSubnet.hostAddress(slot: nil, mode: .nat))
+        let planned = FixedSubnet.addressing(slot: 5, mode: .hostOnly)
+        XCTAssertEqual(planned?.description, "192.168.205.0/24")
+        XCTAssertEqual(planned?.guestAddress, "192.168.205.2")
+        XCTAssertEqual(FixedSubnet.allocate(used: []), 0)
+        XCTAssertEqual(FixedSubnet.allocate(used: [0, 1, 3]), 2)
+        XCTAssertNil(FixedSubnet.allocate(used: Set(FixedSubnet.slots)))
+    }
+
+    func testNetworkSlotRoundTrip() throws {
+        var settings = NetworkSettings(mode: .nat, macAddress: "52:54:00:12:34:56", slot: 7)
+        let data = try JSONEncoder().encode(settings)
+        XCTAssertEqual(try JSONDecoder().decode(NetworkSettings.self, from: data), settings)
+        XCTAssertEqual(settings.plannedAddressing?.guestAddress, "192.168.167.2")
+        settings.mode = .none
+        XCTAssertNil(settings.plannedAddressing)
+        // Ältere Dateien ohne Platz
+        let old = try JSONDecoder().decode(NetworkSettings.self, from: Data(#"{"mode":"nat","macAddress":"52:54:00:12:34:56"}"#.utf8))
+        XCTAssertNil(old.slot)
+    }
+
     func testNetworkModeDecoding() throws {
         let json = """
         { "id": "6C2A2E8E-0000-4000-8000-000000000011", "name": "X", "guestOS": "linux",

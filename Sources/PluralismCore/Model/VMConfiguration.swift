@@ -327,20 +327,30 @@ public struct PortForward: Codable, Equatable, Identifiable, Sendable {
 public struct NetworkSettings: Codable, Equatable, Sendable {
     public var mode: NetworkMode
     public var macAddress: String
+    /// Platz für den festen Adressbereich (siehe `FixedSubnet`). Wird beim Anlegen oder ersten Start vergeben.
+    public var slot: Int?
     /// Weiterleitungen gelten nur im Ausweich-Netz (QEMU-Usermode), wenn vmnet nicht verfügbar ist.
     /// Mit vmnet ist der Gast vom Mac direkt unter seiner Adresse erreichbar.
     public var portForwards: [PortForward]
 
-    public init(mode: NetworkMode = .nat, macAddress: String = MACAddress.random(), portForwards: [PortForward] = []) {
+    public init(mode: NetworkMode = .nat, macAddress: String = MACAddress.random(), slot: Int? = nil,
+                portForwards: [PortForward] = []) {
         self.mode = mode
         self.macAddress = macAddress
+        self.slot = slot
         self.portForwards = portForwards
+    }
+
+    /// Geplante Adressen im festen Bereich für den eingestellten Modus.
+    public var plannedAddressing: GuestNetworkAddressing? {
+        FixedSubnet.addressing(slot: slot, mode: mode)
     }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         mode = (try? c.decode(NetworkMode.self, forKey: .mode)) ?? .nat
         macAddress = try c.decode(.macAddress, default: MACAddress.random())
+        slot = try c.decodeIfPresent(Int.self, forKey: .slot)
         portForwards = try c.decode(.portForwards, default: [])
     }
 }

@@ -193,6 +193,9 @@ struct VMDetailView: View {
     private var networkDescription: String {
         guard config.network.mode != .none else { return config.network.mode.displayName }
         var text = config.network.mode.displayName
+        if !session.state.isActive, let planned = config.network.plannedAddressing?.guestAddress {
+            text += ", Adresse \(planned)"
+        }
         if session.state.isActive {
             switch session.engine.activeNetwork {
             case .vmnet(let addressing):
@@ -210,9 +213,9 @@ struct VMDetailView: View {
     }
 
     /// Ziel für Remote Desktop: im schnellen Netz direkt die VM, sonst die Weiterleitung auf localhost.
-    /// Die Adresse steht erst fest, wenn die VM läuft (vmnet wählt den Bereich beim Start).
     private var remoteDesktopTarget: String? {
-        guard let port = config.windows.rdpHostPort, session.state.isActive else { return nil }
+        guard let port = config.windows.rdpHostPort else { return nil }
+        guard session.state.isActive else { return config.network.plannedAddressing?.guestAddress }
         switch session.engine.activeNetwork {
         case .vmnet(let addressing): return addressing?.guestAddress
         case .fallback: return "localhost:\(port)"

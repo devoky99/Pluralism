@@ -151,8 +151,12 @@ struct VMSettingsView: View {
                     Text(mode.displayName).tag(mode)
                 }
             }
-            if draft.network.mode != .none {
-                Hint("Jede VM bekommt beim Start ein eigenes Netz von macOS (meist 192.168.64.0/24, bei „Nur Mac“ 192.168.128.0/24) und darin die Adresse .2, z. B. ssh benutzer@192.168.64.2. Die genaue Adresse steht in der Übersicht, solange die VM läuft. Andere VMs sehen sie nicht.")
+            if let planned = draft.network.plannedAddressing {
+                LabeledContent("Eigenes Netz", value: planned.description)
+                LabeledContent("Adresse der VM", value: planned.guestAddress ?? "per DHCP")
+                Hint("Die VM bekommt diese Adresse fest zugewiesen und ist vom Mac aus direkt erreichbar, z. B. ssh benutzer@\(planned.guestAddress ?? planned.hostAddress). Andere VMs sehen sie nicht.")
+            } else if draft.network.mode != .none {
+                Hint("Die VM bekommt beim ersten Start ein eigenes Netz mit fester Adresse.")
             }
             HStack {
                 TextField("MAC-Adresse", text: $draft.network.macAddress)

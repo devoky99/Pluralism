@@ -14,6 +14,8 @@ import PluralismNet
 // --subnet:  eigenen Bereich /24 setzen (Adresse geht unverändert an vmnet), Reservierung der .2
 // --others:  vorher N weitere Netze mit gestarteter Schnittstelle offen halten (andere VMs)
 // --cycles:  N-mal hintereinander anlegen, prüfen, freigeben (VM mehrmals starten)
+// --app:     Netz wie die App über VMNetworkRegistry holen (wiederverwenden, Ausweichbereich)
+// --block:   den festen Bereich vorher selbst belegen (Ausweichweg prüfen)
 // Ausgabe: eine JSON-Zeile, Exit-Code 0 bei Erfolg.
 
 struct Options {
@@ -22,6 +24,8 @@ struct Options {
     var reserve = true
     var others = 0
     var cycles = 1
+    var app = false
+    var block = false
     var pause: TimeInterval = 0.5
     var timeout: TimeInterval = 6
 }
@@ -41,6 +45,10 @@ func parseOptions() -> Options {
             if let value = arguments.next(), let count = Int(value) { options.others = count }
         case "--cycles":
             if let value = arguments.next(), let count = Int(value) { options.cycles = max(1, count) }
+        case "--app":
+            options.app = true
+        case "--block":
+            options.block = true
         case "--pause":
             if let value = arguments.next(), let seconds = Double(value) { options.pause = seconds }
         case "--timeout":
@@ -81,7 +89,7 @@ func log(_ text: String) {
 /// Ein Durchlauf: Netz anlegen, Brücke starten, DHCP-Angebot holen, alles wieder freigeben.
 /// Liefert die Felder und den Exit-Code (0 = Erfolg).
 func runOnce(options: Options, mode: VMNetworkMode, tag: String) -> ([String: Any], Int32) {
-    let mac = MACAddress.random()
+    let mac = options.app ? appMAC : MACAddress.random()
     let macBytes = MACAddress.bytes(mac)!
     let hostSocket = directory + "/\(tag)h.sock"
     let guestSocket = directory + "/\(tag)q.sock"
@@ -89,8 +97,15 @@ func runOnce(options: Options, mode: VMNetworkMode, tag: String) -> ([String: An
     log("Netz für \(mac) anlegen")
 
     let network: VMNetwork
+    var notice: String?
     do {
-        network = try VMNetwork(mode: mode, guestMAC: mac, subnet: options.subnet, reserveAddress: options.reserve)
+        if options.app {
+            let acquired = try VMNetworkRegistry.shared.acquire(mode: mode, guestMAC: mac, fixedHostAddress: options.subnet)
+            network = acquired.0
+            notice = acquired.notice
+        } else {
+            network = try VMNetwork(mode: mode, guestMAC: mac, subnet: options.subnet, reserveAddress: options.reserve)
+        }
     } catch {
         return (["step": "network", "error": error.localizedDescription], 2)
     }
@@ -99,8 +114,14 @@ func runOnce(options: Options, mode: VMNetworkMode, tag: String) -> ([String: An
         "subnet": addressing?.description ?? "?",
         "expected": addressing?.guestAddress ?? "dynamisch"
     ]
+    if let notice {
+        fields["notice"] = notice
+    }
+
+    var seenAddress: String?
 
     let relay = PacketRelay(network: network, hostSocketPath: hostSocket, guestSocketPath: guestSocket)
+    relay.onGuestAddress = { seenAddress = $0 }
     do {
         try relay.start()
     } catch {
@@ -145,6 +166,14 @@ func runOnce(options: Options, mode: VMNetworkMode, tag: String) -> ([String: An
     guard let offer else {
         return (fields.merging(["step": "dhcp", "error": "keine DHCP-Antwort"]) { $1 }, 5)
     }
+
+    // Wie ein Gast nach dem DHCP: ARP-Ankündigung mit der neuen Adresse. Die Brücke soll sie erkennen.
+    if let yours = DHCPProbe.bytes(offer.yourAddress) {
+        let arp: [UInt8] = [0, 1, 8, 0, 6, 4, 0, 1] + macBytes + yours + [0, 0, 0, 0, 0, 0] + yours
+        UnixDatagram.send(guestFD, [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF] + macBytes + [0x08, 0x06] + arp, to: hostAddress)
+        Thread.sleep(forTimeInterval: 0.3)
+        fields["detected"] = relay.guestIPv4 ?? seenAddress ?? "-"
+    }
     let matches = addressing?.guestAddress == nil || offer.yourAddress == addressing?.guestAddress
     fields["step"] = "done"
     fields["offer"] = offer.yourAddress
@@ -155,6 +184,7 @@ func runOnce(options: Options, mode: VMNetworkMode, tag: String) -> ([String: An
 
 let options = parseOptions()
 let mode: VMNetworkMode = options.hostOnly ? .hostOnly : .shared
+let appMAC = MACAddress.random()
 mkdir(directory, 0o700)
 log("uid \(getuid())")
 
@@ -176,8 +206,24 @@ for index in 0..<options.others {
     }
 }
 
+// Festen Bereich vorher belegen, als liefe dort schon eine andere VM.
+var blocker: PacketRelay?
+if options.block, let subnet = options.subnet {
+    do {
+        let blocking = try VMNetwork(mode: mode, guestMAC: MACAddress.random(), subnet: subnet)
+        let hostSocket = directory + "/bh.sock"
+        cleanupPaths.append(hostSocket)
+        let relay = PacketRelay(network: blocking, hostSocketPath: hostSocket, guestSocketPath: directory + "/bq.sock")
+        try relay.start()
+        blocker = relay
+    } catch {
+        emit(["step": "block", "error": error.localizedDescription], exitCode: 7)
+    }
+}
+
 if options.cycles == 1 {
     let (fields, code) = runOnce(options: options, mode: mode, tag: "c0")
+    blocker?.stop()
     emit(fields.merging(["others": otherSubnets]) { $1 }, exitCode: code)
 }
 
@@ -187,8 +233,10 @@ var worst: Int32 = 0
 for cycle in 0..<options.cycles {
     let (fields, code) = autoreleasepool { runOnce(options: options, mode: mode, tag: "c\(cycle)") }
     results.append(["subnet": fields["subnet"] ?? "?", "offer": fields["offer"] ?? "-",
-                    "step": fields["step"] ?? "?", "error": fields["error"] ?? ""])
+                    "detected": fields["detected"] ?? "-", "step": fields["step"] ?? "?",
+                    "error": fields["error"] ?? "", "notice": fields["notice"] ?? ""])
     worst = max(worst, code)
     Thread.sleep(forTimeInterval: options.pause)
 }
+blocker?.stop()
 emit(["cycles": results, "others": otherSubnets], exitCode: worst)

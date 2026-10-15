@@ -140,6 +140,12 @@ public enum DHCPProbe {
         return ~UInt16(sum)
     }
 
+    /// "192.168.64.2" als vier Bytes.
+    public static func bytes(_ dotted: String) -> [UInt8]? {
+        let parts = dotted.split(separator: ".").compactMap { UInt8($0) }
+        return parts.count == 4 ? parts : nil
+    }
+
     static func dotted(_ bytes: [UInt8]) -> String {
         bytes.map(String.init).joined(separator: ".")
     }

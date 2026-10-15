@@ -68,8 +68,22 @@ final class AppModel: ObservableObject {
             guard let self, let index = self.configurations.firstIndex(where: { $0.id == saved.id }) else { return }
             self.configurations[index] = saved
         }
+        session.slotAllocator = { [weak self] in
+            self?.allocateSlot()
+        }
         sessions[id] = session
         return session
+    }
+
+    /// Freier Platz für den festen Adressbereich, den keine andere VM der Bibliothek nutzt.
+    func allocateSlot() -> Int? {
+        var used = Set(configurations.compactMap { $0.network.slot })
+        for session in sessions.values {
+            if let slot = session.configuration.network.slot {
+                used.insert(slot)
+            }
+        }
+        return FixedSubnet.allocate(used: used)
     }
 
     var hasActiveVMs: Bool {
@@ -115,7 +129,11 @@ final class AppModel: ObservableObject {
     func createVM(_ request: NewVMRequest, completion: @escaping (Result<VMConfiguration, Error>) -> Void) {
         let library = self.library
         let toolchain = self.toolchain
-        let initialConfig = request.configuration
+        var prepared = request.configuration
+        if prepared.network.slot == nil {
+            prepared.network.slot = allocateSlot()
+        }
+        let initialConfig = prepared
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             var config = initialConfig
             let result: Result<VMConfiguration, Error>

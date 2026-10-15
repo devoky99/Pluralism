@@ -53,8 +53,8 @@ final class VMLibrary {
         try FileManager.default.trashItem(at: bundle(for: id).url, resultingItemURL: nil)
     }
 
-    /// Klont eine ausgeschaltete VM. Die Kopie bekommt eine neue ID, MAC-Adresse und
-    /// Maschinenkennung; Snapshots und gesicherte Zustände werden nicht übernommen.
+    /// Klont eine ausgeschaltete VM. Die Kopie bekommt eine neue ID, MAC-Adresse, Maschinenkennung
+    /// und einen eigenen Adressbereich; Snapshots und gesicherte Zustände werden nicht übernommen.
     func clone(_ source: VMConfiguration, newName: String) throws -> VMConfiguration {
         let fm = FileManager.default
         let sourceBundle = bundle(for: source.id)
@@ -62,6 +62,7 @@ final class VMLibrary {
         copy.id = UUID()
         copy.name = newName
         copy.network.macAddress = MACAddress.random()
+        copy.network.slot = nil   // bekommt beim ersten Start einen eigenen Adressbereich
         copy.createdAt = Date()
         copy.lastStartedAt = nil
         let target = try createBundle(for: copy)

@@ -17,6 +17,8 @@ final class VMSession: ObservableObject, Identifiable {
 
     /// Meldet gespeicherte Änderungen an das AppModel.
     var onConfigurationSaved: ((VMConfiguration) -> Void)?
+    /// Vergibt einen freien Platz für den festen Adressbereich (siehe `FixedSubnet`).
+    var slotAllocator: (() -> Int?)?
 
     /// Mindestlaufzeit mit Hilfsplatte, damit Windows den virtio-Treiber sicher eingebunden hat.
     static let migrationMinimumRuntime: TimeInterval = 120
@@ -61,6 +63,9 @@ final class VMSession: ObservableObject, Identifiable {
         notice = nil
         var updated = configuration
         updated.lastStartedAt = Date()
+        if updated.network.mode != .none, updated.network.slot == nil {
+            updated.network.slot = slotAllocator?()
+        }
         // Umstellung auf virtio abschließen: vorher Snapshot, dann Systemplatte umschalten.
         if updated.disk.migration == .readyToSwitch {
             do {

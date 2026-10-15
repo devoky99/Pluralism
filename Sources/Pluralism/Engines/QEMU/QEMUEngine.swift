@@ -230,7 +230,9 @@ final class QEMUEngine: VMEngine {
         case .nat, .hostOnly:
             let mode: VMNetworkMode = config.network.mode == .nat ? .shared : .hostOnly
             do {
-                let network = try VMNetwork(mode: mode, guestMAC: config.network.macAddress)
+                let (network, fixedNotice) = try VMNetworkRegistry.shared.acquire(
+                    mode: mode, guestMAC: config.network.macAddress,
+                    fixedHostAddress: FixedSubnet.hostAddress(slot: config.network.slot, mode: config.network.mode))
                 let relay = PacketRelay(network: network,
                                         hostSocketPath: runtime.netHostSocket.path,
                                         guestSocketPath: runtime.netGuestSocket.path)
@@ -238,7 +240,7 @@ final class QEMUEngine: VMEngine {
                 try relay.start()
                 return NetworkSetup(backend: .vmnetRelay(guestSocket: runtime.netGuestSocket.path,
                                                          hostSocket: runtime.netHostSocket.path),
-                                    relay: relay, active: .vmnet(network.addressing), notice: nil)
+                                    relay: relay, active: .vmnet(network.addressing), notice: fixedNotice)
             } catch {
                 let notice = "Schnelles Netzwerk (vmnet) nicht verfügbar: \(error.localizedDescription) Die VM nutzt das langsamere Ausweich-Netz."
                 return NetworkSetup(backend: .user(forwards: fallbackForwards), relay: nil, active: .fallback, notice: notice)

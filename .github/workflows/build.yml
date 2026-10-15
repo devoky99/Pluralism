@@ -143,20 +143,17 @@ jobs:
             BIN="$SIGNED"
             codesign -d --entitlements - "$BIN" 2>/dev/null | grep -o "com.apple.security.[a-z.-]*" | tr '\n' ' '; echo
             run() { echo "## $1"; shift; "$BIN" "$@" || echo "exit=$?"; }
-            run "A Internet und Mac"
-            run "B Nur Mac"                                  --host-only
-            run "C zwei andere VMs laufen"                   --others 2
-            run "D dreimal starten"                          --cycles 3
-            run "F eigener Bereich, Netzadresse .0"          --subnet 192.168.96.0
-            run "G eigener Bereich, Mac-Adresse .1"          --subnet 192.168.96.1
-            run "M eigener Bereich dreimal"                  --subnet 192.168.98.1 --cycles 3 --pause 1
-            run "N eigener Bereich, Prozess 1"               --subnet 192.168.99.1
-            run "O eigener Bereich, Prozess 2 gleich danach" --subnet 192.168.99.1
-            run "P Nur Mac, eigener Bereich"                 --host-only --subnet 192.168.160.1
-            run "Q eigener Bereich, zwei andere VMs laufen"  --subnet 192.168.98.1 --others 2
-            run "R eigener Bereich ohne Reservierung"        --subnet 192.168.99.1 --no-reservation
-            run "S eigener Bereich 10.37.0.1"                --subnet 10.37.0.1
-            BIN="$PLAIN"; run "L ohne Entitlement"
+            run "A Internet und Mac, vmnet wählt"
+            run "B Nur Mac, vmnet wählt"                     --host-only
+            run "C fester Bereich (App)"                      --app --subnet 192.168.160.1
+            run "D Nur Mac, fester Bereich (App)"             --app --host-only --subnet 192.168.200.1
+            run "E VM dreimal starten (App)"                  --app --subnet 192.168.161.1 --cycles 3
+            run "F dreimal ohne festen Bereich (App)"         --app --cycles 3
+            run "G fester Bereich belegt, Ausweg (App)"       --app --subnet 192.168.162.1 --block
+            run "H zwei andere VMs laufen (App)"              --app --subnet 192.168.163.1 --others 2
+            run "I fester Bereich mit Netzadresse .0"         --subnet 192.168.96.0
+            run "J fester Bereich neu anlegen im selben Prozess" --subnet 192.168.98.1 --cycles 2
+            BIN="$PLAIN"; run "K ohne Entitlement"
           } 2>&1 | tee "$RUNNER_TEMP/logs/25-netcheck.log"
       - name: App-Bundle bauen und signieren
         run: |
