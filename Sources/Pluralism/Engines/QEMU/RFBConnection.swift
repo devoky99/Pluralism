@@ -46,6 +46,9 @@ final class RFBConnection: @unchecked Sendable {
     /// Verbindung beendet.
     @MainActor var onDisconnect: ((Error?) -> Void)?
 
+    /// Ausdrücklich nicht isoliert: Die Verbindung entsteht im Hintergrund, die Rückrufe setzt danach der Main Actor.
+    nonisolated init() {}
+
     deinit {
         close()
         buffer?.deallocate()

@@ -24,6 +24,9 @@ final class QMPClient: @unchecked Sendable {
     @MainActor var onStatus: ((String) -> Void)?
     private(set) var qemuVersion: String?
 
+    /// Ausdrücklich nicht isoliert: Der Client entsteht im Hintergrund, die Rückrufe setzt danach der Main Actor.
+    nonisolated init() {}
+
     /// Verbindet (mit Wiederholungen) und schaltet den Befehlsmodus frei. Blockiert.
     func connect(path: String, timeout: TimeInterval, isCancelled: () -> Bool) throws {
         let socket = try UnixSocket.connect(path: path, timeout: timeout, isCancelled: isCancelled)
