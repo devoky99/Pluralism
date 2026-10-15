@@ -12,7 +12,8 @@ und `docs/PLAN-LEISTUNG.md`.
   Ton, USB-Medien).
 - **Zielsystem:** macOS 27 (`LSMinimumSystemVersion` 27.0), gebaut mit Xcode 27 und Swift 6.4.
 - **Keine Fremd-Apps als Voraussetzung:** QEMU und swtpm sind in der App enthalten (`scripts/runtime/`).
-  Andere Virtualisierungs-Apps nicht erwähnen und nicht als Abhängigkeit vorsehen.
+  Andere Virtualisierungs-Apps nie als Abhängigkeit oder Empfehlung vorschlagen. Als Vorbild im Quellcode nur,
+  wenn Musti danach fragt (so beim Netzwerk nach UTM, siehe `docs/ARCHITECTURE.md`).
 - **Sprache:** Oberfläche, Doku und Commit-Nachrichten auf Deutsch, Fachbegriffe kurz erklärt.
   Keine Gedankenstriche als Satzzeichen (Bindestriche in Wörtern sind in Ordnung).
 
@@ -53,7 +54,11 @@ Nachschlagewerk: `docs/reference/swift-6.4-book.md` (Kapitelübersicht in `docs/
 
 ## Wichtige Erkenntnisse
 
-- vmnet auf macOS 27: eigener Bereich nur mit der Adresse des Macs (.1), Bereich wird erst beim
-  Prozessende frei, daher `VMNetworkRegistry`. Details in `docs/ARCHITECTURE.md`.
+- vmnet auf macOS 27: eigener Bereich nur mit der Adresse des Macs (.1). vmnet-Netze und -Konfigurationen sind
+  Core-Foundation-Objekte und müssen per `CFRelease` freigegeben werden, sonst bleibt der Bereich belegt.
+  Windows: QEMU legt das Netz selbst an (`vmnet-shared`/`vmnet-host`, braucht nur
+  `com.apple.security.virtualization`), Ausweg ist die Paketbrücke über `-netdev stream`.
+  Netzwerkkarte immer mit `romfile=`, sonst startet QEMU ohne `efi-virtio.rom` nicht.
+  Details in `docs/ARCHITECTURE.md`.
 - Windows-Treiber kommen aus virtio-win, Speicher- und Netztreiber über `$WinPEDriver$` schon im Setup.
 - Unix-Socket-Pfade sind auf 104 Bytes begrenzt, daher `/tmp/pluralism-<uid>/<kurz-ID>/`.

@@ -336,7 +336,7 @@ struct VMDetailView: View {
                         }
                         .disabled(session.state != .running || remoteDesktopTarget == nil)
                     }
-                    Hint("Für die „Windows App“ von Microsoft. Die Verbindungsdatei schaltet Zwischenablage, Laufwerke und Geräte-Umleitung aus, die VM bleibt isoliert. Remote Desktop braucht Windows 11 Pro.")
+                    Hint("Für die „Windows App“ von Microsoft. Die Verbindungsdatei schaltet Zwischenablage, Laufwerke und Geräte-Umleitung aus, die VM bleibt isoliert. Remote Desktop braucht Windows 11 Pro. Die Windows App braucht die Erlaubnis für das lokale Netzwerk (Systemeinstellungen › Datenschutz & Sicherheit).")
                 }
                 HStack(spacing: 16) {
                     Text("TPM: \(config.windows.tpm.displayName)")

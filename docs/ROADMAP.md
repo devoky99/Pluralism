@@ -30,6 +30,8 @@ Leistung und Verwaltung.
 - [x] Netzwerk-Prüfprogramm in der CI (vmnet ohne Root, fester Bereich, DHCP-Reservierung, Neustarts, Ausweichbereich)
 - [x] Adresse des Gasts wird an seinen Rahmen erkannt und angezeigt (ohne Gastagent)
 - [x] Sprachmodus Swift 6 (Swift 6.4, Xcode 27) mit vollständiger Prüfung auf Datenrennen
+- [x] 0.2.1: Windows-Netz wie UTM (QEMU mit vmnet-shared/-host), Paketbrücke als Ausweg über Stream-Socket,
+      vmnet-Objekte werden freigegeben, Netzwerkkarte ohne PXE-ROM, Ende-zu-Ende-Netzprüfung in der CI
 - [x] Linux-Platten standardmäßig ASIF
 
 ## 0.3: Netzwerk, Rest

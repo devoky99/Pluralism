@@ -29,8 +29,11 @@ open build/Pluralism.app
 4. Nach der Installation VM herunterfahren, unter Medien **Auswerfen**.
 
 Die Auflösung folgt der Fenstergröße automatisch. Die VM hat eine feste Adresse (steht in der Übersicht,
-z. B. 192.168.160.2) und ist vom Mac direkt erreichbar, etwa mit `ssh benutzer@192.168.160.2`. Mit **Anhalten** (Mond-Symbol) wird der Zustand
-gesichert, wenn in den VM-Einstellungen unter Erweitert „Anhalten ermöglichen“ eingeschaltet ist.
+z. B. 192.168.160.2) und ist vom Mac direkt erreichbar, etwa mit `ssh benutzer@192.168.160.2`.
+Beim ersten Zugriff fragt macOS, ob das Terminal aufs lokale Netzwerk darf. Ohne diese Erlaubnis meldet ssh
+„No route to host“; ändern lässt sie sich unter Systemeinstellungen › Datenschutz & Sicherheit › Lokales Netzwerk.
+Mit **Anhalten** (Mond-Symbol) wird der Zustand gesichert, wenn in den VM-Einstellungen unter Erweitert
+„Anhalten ermöglichen“ eingeschaltet ist.
 
 ## 3. Windows-11-VM
 

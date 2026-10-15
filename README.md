@@ -34,6 +34,8 @@ Plan: [docs/ROADMAP.md](docs/ROADMAP.md). Recherche: [docs/research/](docs/resea
 - **QEMU ist in der App enthalten** (Version 11.1.2, nur ARM64, mit swtpm). Homebrew ist nicht nötig.
 - **Netzwerk über Apples vmnet:** jede VM hat ihr eigenes Netz mit fester Adresse (z. B. 192.168.160.2),
   wählbar „Internet und Mac“, „Nur Mac“ oder „Kein Netzwerk“. Kein Root, keine Sonderrechte.
+  Windows: QEMU legt das Netz selbst an (`vmnet-shared`/`vmnet-host`), Ausweg ist die Paketbrücke von Pluralism.
+  Die CI prüft bei jedem Push DHCP, DNS, Internet und die Verbindung zwischen Mac und VM.
 - **Linux:** UEFI-Start vom ISO, virtio-Platte im ASIF-Format, virtio-gpu mit automatischer Auflösung,
   Ton und Mikrofon (optional), verschachtelte Virtualisierung, Zustand sichern und fortsetzen,
   ISO im laufenden Betrieb einlegen

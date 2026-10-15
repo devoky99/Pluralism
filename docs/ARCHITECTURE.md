@@ -48,9 +48,10 @@ flowchart LR
     QEMU -->|Prozess| T[swtpm]
     QEMU <-->|QMP: Start, Stopp, Pause| Q
     QEMU <-->|VNC: Bild, Tastatur, Maus| Q
-    Q <-->|Ethernet-Rahmen, dgram-Socket| Relay[PacketRelay]
-    Relay <--> VMNET[vmnet-Netz der VM]
-    VZ <--> VMNET2[vmnet-Netz der VM]
+    Q <-->|vmnet-shared / vmnet-host| VMNET[vmnet-Netz der VM]
+    Q -.->|Ausweg: -netdev stream| Relay[PacketRelay]
+    Relay -.-> VMNET
+    VZ <-->|VZVmnetNetworkDeviceAttachment| VMNET2[vmnet-Netz der VM]
     Q --> HVF[Hypervisor.framework]
     HVF --> WinGast[Windows 11 ARM64]
 ```
@@ -76,7 +77,9 @@ Nur Foundation, kompiliert auch unter Linux.
 | `RFB/RFBProtocol.swift` | VNC-Client (RFB 3.8, Raw, CopyRect, DesktopSize, QEMU-Tastenerweiterung), ohne Zwischenablage |
 | `RFB/KeyboardMapping.swift` | Mac-Keycodes zu PC-Scancodes, inklusive ISO-Tausch für deutsche Tastaturen |
 | `Windows/UnattendBuilder.swift` | `autounattend.xml` und `pluralism-setup.cmd` für die automatische Windows-Installation |
-| `Network/DHCPProbe.swift` | DHCP-Discover als Ethernet-Rahmen bauen und Antworten auswerten (für `pluralism-netcheck`) |
+| `Network/DHCPProbe.swift` | DHCP-Discover und -Request als Ethernet-Rahmen bauen und Antworten auswerten (für `pluralism-netcheck`) |
+| `Network/Packets.swift` | ARP, IPv4, UDP, TCP, ICMP, DNS: Bausteine, mit denen `pluralism-netcheck` einen Gast nachspielt |
+| `Network/StreamFraming.swift` | Rahmenformat von `-netdev stream` (4 Byte Länge, dann der Rahmen) |
 | `Network/FixedSubnet.swift` | Feste Adressbereiche: Platz 0 bis 39, „Internet und Mac“ 192.168.160+x, „Nur Mac“ 192.168.200+x |
 | `Network/GuestAddressWatcher.swift` | Erkennt die tatsächliche IPv4-Adresse des Gasts an seinen eigenen Rahmen (IPv4, ARP) |
 
@@ -84,12 +87,14 @@ Nur Foundation, kompiliert auch unter Linux.
 
 | Datei | Aufgabe |
 |---|---|
-| `VMNetwork.swift` | Ein vmnet-Netz: Modus, fester Bereich /24 (oder von vmnet gewählt), DHCP-Reservierung der .2 für die MAC des Gasts |
-| `VMNetworkRegistry.swift` | Hält die Netze, solange Pluralism läuft, damit eine VM beim Neustart dasselbe Netz bekommt; Ausweichbereich, wenn der feste belegt ist |
-| `PacketRelay.swift` | Paketbrücke QEMU ↔ vmnet: Unix-Datagramm-Socket auf der einen Seite, `vmnet_read`/`vmnet_write` gebündelt auf der anderen; meldet die Adresse, die der Gast benutzt |
+| `VMNetwork.swift` | Ein vmnet-Netz: Modus, fester Bereich /24 (oder von vmnet gewählt), DHCP-Reservierung der .2 für die MAC des Gasts; gibt Netz und Konfiguration per `CFRelease` frei |
+| `VMNetworkRegistry.swift` | Vergibt Netze und merkt sie sich nur schwach (wer sie benutzt, hält sie); Ausweichbereich, wenn der feste belegt ist |
+| `PacketRelay.swift` | Paketbrücke QEMU ↔ vmnet für den Ausweg: Unix-Stream-Socket (`-netdev stream`) auf der einen Seite, `vmnet_read`/`vmnet_write` gebündelt auf der anderen; Rückstau statt Verlust; meldet die Adresse, die der Gast benutzt |
 
-`pluralism-netcheck` nutzt das ohne VM: Netz anlegen, Brücke starten, als „Gast“ ein DHCP-Discover senden,
-Adresse prüfen. Die CI führt das bei jedem Push auf einem macOS-27-Runner ohne Root aus.
+`pluralism-netcheck` spielt ohne VM einen vollständigen Gast: Netz anlegen, Brücke starten, wie QEMU verbinden,
+DHCP mit Bestätigung, Gateway per ARP, DNS über das Gateway, TCP-Verbindungsaufbau und Ping ins Internet,
+VM → Mac per UDP, Mac → VM per `/sbin/ping`. Außerdem startet es das mitgelieferte QEMU einmal an der Brücke und
+einmal mit eigenem vmnet. Die CI führt das bei jedem Push auf einem macOS-27-Runner ohne Root aus.
 
 #### vmnet auf macOS 27: was die Prüfung ergeben hat
 
@@ -99,8 +104,15 @@ Adresse prüfen. Die CI führt das bei jedem Push auf einem macOS-27-Runner ohne
 | Eigener Bereich | Geht, wenn die Adresse des Macs (.1) übergeben wird. Mit der Netzadresse (.0) startet die Schnittstelle nicht (Code 1001). |
 | Ohne eigenen Bereich | vmnet vergibt 192.168.64.0/24, dann .65, .66 … („Nur Mac“ ab 192.168.128.0/24), bei jedem neuen Netz den nächsten. |
 | DHCP-Reservierung | Funktioniert innerhalb des Bereichs. Außerhalb wird sie still ignoriert. |
-| Bereich wieder frei? | Erst wenn der Prozess endet. Im selben Prozess scheitert ein zweites Netz mit demselben Bereich (Code 1001). Daher `VMNetworkRegistry`. |
+| Bereich wieder frei? | Ja, sofort, sobald Netz und Konfiguration per `CFRelease` freigegeben sind. Swift gibt diese Objekte nicht selbst frei; vor Version 0.2.1 blieben sie deshalb bis zum Prozessende belegt. |
 | Mehrere Netze gleichzeitig | Ja, jedes mit eigenem Bereich. |
+| Alte Schnittstelle (`vmnet_start_interface`, QEMUs `vmnet-shared`/`vmnet-host`) | Läuft ohne Root, wenn das Programm `com.apple.security.virtualization` trägt. Das nur auf Antrag vergebene `com.apple.vm.networking` ist nicht nötig. Ohne Entitlement: Code 1001. |
+| Internet aus der VM | DNS über das Gateway, TCP und Ping ins Internet funktionieren („Internet und Mac“); „Nur Mac“ hat erwartungsgemäß kein Internet. |
+
+Herkunft: Freigabe der vmnet-Objekte per `CFRelease`, schwach gehaltene Netze, fester Bereich mit der Adresse des
+Macs und Ausweichbereich sowie QEMUs eigene vmnet-Netdevs sind dem Quellcode von UTM nachempfunden
+(`UTMAppleVmnetNetworkManager.swift`, `UTMQemuConfiguration+Arguments.swift`, Apache License 2.0). Der Code in
+Pluralism ist eigenständig geschrieben.
 
 ### Pluralism (macOS-App)
 
@@ -182,8 +194,8 @@ qemu-system-aarch64 -nodefaults -machine virt,gic-version=3 -accel hvf -cpu host
   -device usb-storage,drive=installer,bootindex=0   (Windows-ISO)
   -device usb-storage,drive=drivers                 (virtio-win)
   -device usb-storage,drive=unattend                (Antwortdatei)
-  -netdev dgram,id=net0,local.type=unix,local.path=net-q.sock,remote.type=unix,remote.path=net-h.sock
-  -device virtio-net-pci,netdev=net0,mac=…
+  -netdev vmnet-shared,id=net0,start-address=192.168.160.1,end-address=192.168.160.254,subnet-mask=255.255.255.0
+  -device virtio-net-pci,netdev=net0,mac=…,romfile=
   -audiodev coreaudio -device intel-hda -device hda-output
   -qmp unix:qmp.sock -display none -vnc unix:vnc.sock
 ```
@@ -210,13 +222,18 @@ Warum so:
 - **TPM:** Das normale QEMU bietet unter ARM nur `tpm-tis-device`, das Windows ARM auf Apple Silicon laut
   Berichten nicht zuverlässig nutzt („Code 10“). Mit dem Gerät `tpm-crb-device` (ein Patch für QEMU) klappt es.
   Pluralism erkennt, welches Gerät vorhanden ist. Standard ist „kein TPM“ plus Umgehung der Prüfung.
-- **Netzwerk über vmnet:** QEMU schickt jeden Ethernet-Rahmen als Datagramm an Pluralism (`-netdev dgram`),
-  Pluralism reicht ihn gebündelt an ein eigenes vmnet-Netz weiter (`PacketRelay`). Die neue vmnet-Schnittstelle
-  aus macOS 26 (`vmnet_network_create`, `vmnet_interface_start_with_network`) braucht dafür weder Root noch das
-  Entitlement `com.apple.vm.networking`, wohl aber `com.apple.security.virtualization`. Windows bekommt per
-  DHCP-Reservierung immer dieselbe Adresse (z. B. 192.168.160.2) und ist vom Mac direkt erreichbar.
-- **Ausweich-Netz:** Schlägt vmnet fehl, nutzt QEMU sein Usermode-Netz (slirp). Der Mac erreicht Windows dann
-  nur über ausdrücklich eingerichtete Portweiterleitungen auf 127.0.0.1.
+- **Netzwerk:** QEMU legt das vmnet-Netz selbst an (`-netdev vmnet-shared` bzw. `vmnet-host`), mit dem festen
+  Bereich der VM: Mac an der .1, Windows bekommt per DHCP als einziger Gast die .2. So arbeitet auch UTM. Die
+  mitgelieferte QEMU-Laufzeit ist dafür mit vmnet gebaut und trägt `com.apple.security.virtualization`;
+  Root oder `com.apple.vm.networking` braucht es auf macOS 27 nicht.
+- **romfile=** an der Netzwerkkarte: Ohne diese Angabe sucht QEMU das PXE-ROM `efi-virtio.rom` und startet ohne
+  die Datei gar nicht. Die UEFI-Firmware hat einen eigenen virtio-net-Treiber, das ROM wird nicht gebraucht.
+- **Ausweg 1, Paketbrücke:** Scheitert QEMUs eigenes vmnet (Meldung mit „vmnet“ im Log), startet Pluralism die VM
+  sofort mit der Paketbrücke neu: Pluralism legt das vmnet-Netz selbst an (neue Schnittstelle aus macOS 26) und
+  QEMU verbindet sich per `-netdev stream`. Ein Stream statt Datagramme, weil macOS Datagramme verwirft, sobald
+  QEMUs Empfangspuffer (4 KB) voll ist; beim Stream wartet der Sender, Pluralism puffert bis 4 MB.
+- **Ausweg 2, Usermode-Netz:** Geht auch das nicht, nutzt QEMU slirp. Der Mac erreicht Windows dann nur über
+  ausdrücklich eingerichtete Portweiterleitungen auf 127.0.0.1.
 
 ### Anzeige und Eingabe
 
@@ -251,12 +268,14 @@ Das Passwort steht nur im Setup-ISO, nicht in `config.json`.
 
 1. QEMU-Quellcode laden, Prüfsumme gegen `scripts/runtime/versions.env` prüfen
 2. Konfigurieren mit `--without-default-features` und nur dem Nötigen: `aarch64-softmmu`, HVF, Werkzeuge
-   (qemu-img), VNC, Cocoa, CoreAudio, slirp, TPM, Device-Tree. Keine Gastagenten, keine Ordnerfreigaben.
+   (qemu-img), VNC, Cocoa, CoreAudio, vmnet, slirp, TPM, Device-Tree. Keine Gastagenten, keine Ordnerfreigaben.
 3. swtpm aus Homebrew übernehmen
 4. `assemble.py`: Programme nach `bin/`, Firmware nach `share/qemu/`, alle Bibliotheken außerhalb des Systems
-   nach `lib/`; Ladepfade auf `@executable_path/../lib` bzw. `@loader_path` umschreiben; ad hoc signieren;
+   nach `lib/`; Ladepfade auf `@executable_path/../lib` bzw. `@loader_path` umschreiben; ad hoc signieren
+   (QEMU mit `Resources/QEMU.entitlements`: Hypervisor und Virtualization);
    Lizenztexte und `pluralism-runtime.json` ablegen; prüfen, dass nichts mehr auf Homebrew verweist
-5. Selbsttest: Versionen, benötigte Geräte, `-netdev dgram`, `-accel hvf`
+5. Selbsttest: Versionen, benötigte Geräte, Netdevs `stream`, `vmnet-shared`, `vmnet-host`, `user`,
+   `-accel hvf`, Entitlement `com.apple.security.virtualization`
 
 `build-app.sh` kopiert die Laufzeit nach `Contents/Resources/Runtime` und signiert QEMU mit
 `Resources/QEMU.entitlements`. `ToolchainDetector` findet sie dort zuerst.

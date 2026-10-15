@@ -53,6 +53,9 @@ codesign -d --entitlements - "$APP" 2>/dev/null | grep -q "com.apple.security.vi
 if [ -x "$APP/Contents/Resources/Runtime/bin/qemu-system-aarch64" ]; then
   codesign -d --entitlements - "$APP/Contents/Resources/Runtime/bin/qemu-system-aarch64" 2>/dev/null \
     | grep -q "com.apple.security.hypervisor" && echo "    QEMU hat das Hypervisor-Entitlement."
+  codesign -d --entitlements - "$APP/Contents/Resources/Runtime/bin/qemu-system-aarch64" 2>/dev/null \
+    | grep -q "com.apple.security.virtualization" && echo "    QEMU darf vmnet ohne Root nutzen (Virtualization-Entitlement)." \
+    || { echo "QEMU fehlt com.apple.security.virtualization"; exit 1; }
   "$APP/Contents/Resources/Runtime/bin/qemu-system-aarch64" -version | head -1
 fi
 

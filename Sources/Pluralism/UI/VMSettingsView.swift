@@ -155,6 +155,7 @@ struct VMSettingsView: View {
                 LabeledContent("Eigenes Netz", value: planned.description)
                 LabeledContent("Adresse der VM", value: planned.guestAddress ?? "per DHCP")
                 Hint("Die VM bekommt diese Adresse fest zugewiesen und ist vom Mac aus direkt erreichbar, z. B. ssh benutzer@\(planned.guestAddress ?? planned.hostAddress). Andere VMs sehen sie nicht.")
+                Hint("macOS fragt beim ersten Zugriff, ob ein Programm (z. B. Terminal oder die Windows App) aufs lokale Netzwerk darf. Ohne Erlaubnis meldet es „No route to host“. Ändern unter Systemeinstellungen › Datenschutz & Sicherheit › Lokales Netzwerk.")
             } else if draft.network.mode != .none {
                 Hint("Die VM bekommt beim ersten Start ein eigenes Netz mit fester Adresse.")
             }
