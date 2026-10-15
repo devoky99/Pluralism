@@ -14,7 +14,7 @@ public enum VMNetworkError: Error, LocalizedError, Equatable {
     public var errorDescription: String? {
         switch self {
         case .vmnet(let step, let code):
-            return "vmnet: \(step) fehlgeschlagen (\(VMNetworkError.describe(code)))."
+            return "vmnet: \(step) fehlgeschlagen (\(VMNetworkError.describe(code)), Code \(code))."
         case .invalidMAC(let mac):
             return "Ungültige MAC-Adresse: \(mac)"
         case .invalidAddress(let address):
@@ -65,7 +65,9 @@ public final class VMNetwork {
     public let addressing: GuestNetworkAddressing
     public let mode: VMNetworkMode
 
-    public init(mode: VMNetworkMode, addressing: GuestNetworkAddressing, guestMAC: String) throws {
+    /// - Parameter customize: false lässt Adressbereich und DHCP-Reservierung weg (vmnet-Standard),
+    ///   nur für Diagnosen.
+    public init(mode: VMNetworkMode, addressing: GuestNetworkAddressing, guestMAC: String, customize: Bool = true) throws {
         guard let macBytes = MACAddress.bytes(guestMAC) else {
             throw VMNetworkError.invalidMAC(guestMAC)
         }
@@ -79,18 +81,20 @@ public final class VMNetwork {
             throw VMNetworkError.vmnet("Netzkonfiguration anlegen", Int(status.rawValue))
         }
 
-        var subnet = try VMNetwork.address(addressing.subnet)
-        var mask = try VMNetwork.address(addressing.mask)
-        status = vmnet_network_configuration_set_ipv4_subnet(configuration, &subnet, &mask)
-        guard status == .VMNET_SUCCESS else {
-            throw VMNetworkError.vmnet("Adressbereich \(addressing.subnet)/24 setzen", Int(status.rawValue))
-        }
+        if customize {
+            var subnet = try VMNetwork.address(addressing.subnet)
+            var mask = try VMNetwork.address(addressing.mask)
+            status = vmnet_network_configuration_set_ipv4_subnet(configuration, &subnet, &mask)
+            guard status == .VMNET_SUCCESS else {
+                throw VMNetworkError.vmnet("Adressbereich \(addressing.subnet)/24 setzen", Int(status.rawValue))
+            }
 
-        var guestAddress = try VMNetwork.address(addressing.guestAddress)
-        var mac = ether_addr_t(octet: (macBytes[0], macBytes[1], macBytes[2], macBytes[3], macBytes[4], macBytes[5]))
-        status = vmnet_network_configuration_add_dhcp_reservation(configuration, &mac, &guestAddress)
-        guard status == .VMNET_SUCCESS else {
-            throw VMNetworkError.vmnet("DHCP-Reservierung für \(addressing.guestAddress)", Int(status.rawValue))
+            var guestAddress = try VMNetwork.address(addressing.guestAddress)
+            var mac = ether_addr_t(octet: (macBytes[0], macBytes[1], macBytes[2], macBytes[3], macBytes[4], macBytes[5]))
+            status = vmnet_network_configuration_add_dhcp_reservation(configuration, &mac, &guestAddress)
+            guard status == .VMNET_SUCCESS else {
+                throw VMNetworkError.vmnet("DHCP-Reservierung für \(addressing.guestAddress)", Int(status.rawValue))
+            }
         }
 
         guard let network = vmnet_network_create(configuration, &status), status == .VMNET_SUCCESS else {

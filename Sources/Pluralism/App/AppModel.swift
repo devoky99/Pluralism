@@ -134,7 +134,7 @@ final class AppModel: ObservableObject {
             prepared.network.addressing = allocateAddressing()
         }
         let initialConfig = prepared
-        DispatchQueue.global(qos: .userInitiated).async {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             var config = initialConfig
             let result: Result<VMConfiguration, Error>
             do {
@@ -212,7 +212,7 @@ final class AppModel: ObservableObject {
             return
         }
         let library = self.library
-        DispatchQueue.global(qos: .userInitiated).async {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let result = Result { try library.clone(config, newName: "\(config.name) Kopie") }
             DispatchQueue.main.async { [weak self] in
                 switch result {

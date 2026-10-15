@@ -133,12 +133,20 @@ jobs:
       - name: Netzwerk-Prüfung (vmnet ohne Root)
         continue-on-error: true
         run: |
-          BIN="$(swift build -c release --show-bin-path)/pluralism-netcheck"
+          SRC="$(swift build -c release --show-bin-path)/pluralism-netcheck"
+          PLAIN="$RUNNER_TEMP/netcheck-unsigned"
+          SIGNED="$RUNNER_TEMP/netcheck-signed"
+          cp "$SRC" "$PLAIN"
+          cp "$SRC" "$SIGNED"
+          codesign --force --sign - --timestamp=none --entitlements Resources/Pluralism.entitlements "$SIGNED"
           {
-            echo "## shared"
-            "$BIN" --index 150 || echo "exit=$?"
-            echo "## host-only"
-            "$BIN" --host-only --index 151 || echo "exit=$?"
+            for BIN in "$SIGNED" "$PLAIN"; do
+              echo "### $(basename "$BIN")"
+              codesign -d --entitlements - "$BIN" 2>/dev/null | grep -o "com.apple.security.[a-z.-]*" | tr '\n' ' '; echo
+              echo "## shared, eigenes Netz";   "$BIN" --index 150 || echo "exit=$?"
+              echo "## shared, Standard";       "$BIN" --plain --index 152 || echo "exit=$?"
+              echo "## host-only, eigenes Netz"; "$BIN" --host-only --index 151 || echo "exit=$?"
+            done
           } 2>&1 | tee "$RUNNER_TEMP/logs/25-netcheck.log"
       - name: App-Bundle bauen und signieren
         run: |

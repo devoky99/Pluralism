@@ -10,11 +10,13 @@ import PluralismNet
 // DHCP-Discover senden und auf das Angebot von vmnet warten. Kommt die reservierte Adresse
 // zurück, funktionieren Netz, Reservierung und Brücke.
 //
-// Aufruf: pluralism-netcheck [--host-only] [--index 150] [--timeout 6]
+// Aufruf: pluralism-netcheck [--host-only] [--plain] [--index 150] [--timeout 6]
+// --plain: ohne eigenen Adressbereich und ohne Reservierung (Diagnose)
 // Ausgabe: eine JSON-Zeile, Exit-Code 0 bei Erfolg.
 
 struct Options {
     var hostOnly = false
+    var plain = false
     var index = 150
     var timeout: TimeInterval = 6
 }
@@ -26,6 +28,8 @@ func parseOptions() -> Options {
         switch argument {
         case "--host-only":
             options.hostOnly = true
+        case "--plain":
+            options.plain = true
         case "--index":
             if let value = arguments.next(), let index = Int(value) { options.index = index }
         case "--timeout":
@@ -70,7 +74,8 @@ FileHandle.standardError.write("Netz \(addressing.subnet)/24 für \(mac) anlegen
 
 let network: VMNetwork
 do {
-    network = try VMNetwork(mode: options.hostOnly ? .hostOnly : .shared, addressing: addressing, guestMAC: mac)
+    network = try VMNetwork(mode: options.hostOnly ? .hostOnly : .shared, addressing: addressing, guestMAC: mac,
+                            customize: !options.plain)
 } catch {
     report(["step": "network", "error": error.localizedDescription], exitCode: 2)
 }
@@ -128,7 +133,7 @@ let details: [String: Any] = [
 guard let offer else {
     report(details.merging(["step": "dhcp", "error": "keine DHCP-Antwort"]) { $1 }, exitCode: 5)
 }
-let matches = offer.yourAddress == addressing.guestAddress
+let matches = options.plain || offer.yourAddress == addressing.guestAddress
 report(details.merging([
     "step": "done",
     "offer": offer.yourAddress,
