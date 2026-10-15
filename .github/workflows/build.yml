@@ -26,7 +26,7 @@ jobs:
   core-linux:
     name: Kern-Tests (Linux)
     runs-on: ubuntu-latest
-    container: swift:6.1
+    container: swift:6.4
     steps:
       - uses: actions/checkout@v4
       - name: Tests PluralismCore
