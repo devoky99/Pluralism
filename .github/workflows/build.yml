@@ -142,11 +142,19 @@ jobs:
           {
             BIN="$SIGNED"
             codesign -d --entitlements - "$BIN" 2>/dev/null | grep -o "com.apple.security.[a-z.-]*" | tr '\n' ' '; echo
-            echo "## A Internet und Mac, feste Adresse";        "$BIN" || echo "exit=$?"
-            echo "## B Nur Mac, feste Adresse";                 "$BIN" --host-only || echo "exit=$?"
-            echo "## C Internet und Mac, zwei andere VMs laufen"; "$BIN" --others 2 || echo "exit=$?"
-            echo "## D ohne Reservierung";                       "$BIN" --no-reservation || echo "exit=$?"
-            echo "## E ohne Entitlement";                        "$PLAIN" || echo "exit=$?"
+            run() { echo "## $1"; shift; "$BIN" "$@" || echo "exit=$?"; }
+            run "A Internet und Mac"
+            run "B Nur Mac"                               --host-only
+            run "C zwei andere VMs laufen"                --others 2
+            run "D dreimal starten"                       --cycles 3
+            run "E dreimal starten, 3 s Pause"            --cycles 3 --pause 3
+            run "F eigener Bereich 192.168.96.0"          --subnet 192.168.96.0
+            run "G eigener Bereich 192.168.96.1"          --subnet 192.168.96.1
+            run "H eigener Bereich 192.168.64.0"          --subnet 192.168.64.0
+            run "I eigener Bereich ohne Reservierung"     --subnet 192.168.96.0 --no-reservation
+            run "J Nur Mac, eigener Bereich"              --host-only --subnet 192.168.160.0
+            run "K eigener Bereich dreimal"               --subnet 192.168.97.0 --cycles 3
+            BIN="$PLAIN"; run "L ohne Entitlement"
           } 2>&1 | tee "$RUNNER_TEMP/logs/25-netcheck.log"
       - name: App-Bundle bauen und signieren
         run: |

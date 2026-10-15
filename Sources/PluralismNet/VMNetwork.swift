@@ -56,60 +56,62 @@ public enum VMNetworkMode: Sendable {
 ///
 /// Erkenntnisse aus der Prüfung auf macOS 27 (pluralism-netcheck in der CI):
 /// - Ohne Root möglich, aber nur mit Entitlement `com.apple.security.virtualization`
-///   (ohne Entitlement scheitert `vmnet_network_create`).
-/// - Einen eigenen Adressbereich setzen bricht den Start der Schnittstelle ab. vmnet wählt den
-///   Bereich deshalb selbst (meist 192.168.64.0/24 bzw. 192.168.128.0/24 für „Nur Mac“).
-/// - DHCP-Reservierungen funktionieren, müssen aber vor dem Anlegen feststehen.
-///
-/// Daher zwei Schritte: Ein Probenetz verrät den Adressbereich, den vmnet vergeben wird, dann
-/// entsteht das echte Netz mit Reservierung der zweiten Adresse (.2) für die MAC des Gasts.
-/// Weicht der Bereich danach ab, bekommt der Gast seine Adresse dynamisch per DHCP.
+///   (ohne Entitlement scheitert `vmnet_network_create` mit Code 1002).
+/// - Ohne eigenen Bereich vergibt vmnet beim Anlegen den nächsten freien Bereich
+///   (192.168.64.0/24, dann .65, .66 …; „Nur Mac“ ab 192.168.128.0/24).
+/// - Der einzige Gast im Netz bekommt per DHCP die .2.
 public final class VMNetwork {
     public let ref: vmnet_network_ref
     public let mode: VMNetworkMode
-    /// Tatsächliche Adressen. `guestAddress` ist nur gesetzt, wenn die Reservierung greift.
+    /// Tatsächlicher Bereich. `guestAddress` ist nur gesetzt, wenn eine Reservierung besteht.
     public let addressing: GuestNetworkAddressing?
 
-    public init(mode: VMNetworkMode, guestMAC: String, reserveAddress: Bool = true) throws {
+    /// - Parameters:
+    ///   - subnet: eigener Bereich (Adresse, wie sie an vmnet geht, Maske /24), sonst wählt vmnet
+    ///   - reserveAddress: bei eigenem Bereich die .2 für die MAC des Gasts reservieren
+    public init(mode: VMNetworkMode, guestMAC: String, subnet: String? = nil, reserveAddress: Bool = true) throws {
         guard let macBytes = MACAddress.bytes(guestMAC) else {
             throw VMNetworkError.invalidMAC(guestMAC)
         }
         self.mode = mode
-
         var planned: GuestNetworkAddressing?
-        var reservation: [UInt8]?
-        if reserveAddress {
-            let probe = try VMNetwork.create(mode: mode, mac: nil, address: nil)
-            planned = VMNetwork.addressing(of: probe, reserveGuest: true)
-            if let guest = planned?.guestAddress {
-                reservation = VMNetwork.bytes(guest)
+        if let subnet {
+            guard let bytes = VMNetwork.bytes(subnet),
+                  let plan = GuestNetworkAddressing.from(network: bytes, mask: [255, 255, 255, 0], reserveGuest: reserveAddress) else {
+                throw VMNetworkError.invalidAddress(subnet)
             }
+            planned = plan
         }
-
-        let network = try VMNetwork.create(mode: mode, mac: reservation == nil ? nil : macBytes, address: reservation)
-        ref = network
-        let actual = VMNetwork.addressing(of: network, reserveGuest: false)
-        if let actual, let planned, actual.subnet == planned.subnet, actual.prefixLength == planned.prefixLength {
+        let reservation = planned?.guestAddress.flatMap(VMNetwork.bytes)
+        ref = try VMNetwork.create(mode: mode, subnet: subnet.flatMap(VMNetwork.bytes),
+                                   mac: reservation == nil ? nil : macBytes, address: reservation)
+        let actual = VMNetwork.addressing(of: ref, reserveGuest: false)
+        if let actual, let planned, actual.subnet == planned.subnet {
             addressing = planned
         } else {
             addressing = actual
         }
     }
 
-    /// Legt ein Netz an, optional mit Reservierung der IPv4-Adresse `address` für die MAC `mac`.
-    static func create(mode: VMNetworkMode, mac: [UInt8]?, address: [UInt8]?) throws -> vmnet_network_ref {
+    /// Legt ein Netz an, optional mit eigenem Bereich (/24) und Reservierung von `address` für `mac`.
+    static func create(mode: VMNetworkMode, subnet: [UInt8]?, mac: [UInt8]?, address: [UInt8]?) throws -> vmnet_network_ref {
         var status = vmnet_return_t.VMNET_SUCCESS
         let operatingMode: operating_modes_t = mode == .shared ? .VMNET_SHARED_MODE : .VMNET_HOST_MODE
         guard let configuration = vmnet_network_configuration_create(operatingMode, &status),
               status == .VMNET_SUCCESS else {
             throw VMNetworkError.vmnet("Netzkonfiguration anlegen", Int(status.rawValue))
         }
+        if let subnet, subnet.count == 4 {
+            var network = VMNetwork.inAddr(subnet)
+            var mask = VMNetwork.inAddr([255, 255, 255, 0])
+            status = vmnet_network_configuration_set_ipv4_subnet(configuration, &network, &mask)
+            guard status == .VMNET_SUCCESS else {
+                throw VMNetworkError.vmnet("Adressbereich setzen", Int(status.rawValue))
+            }
+        }
         if let mac, let address, mac.count == 6, address.count == 4 {
             var etherAddress = ether_addr_t(octet: (mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]))
-            var guest = in_addr()
-            withUnsafeMutableBytes(of: &guest.s_addr) { raw in
-                for index in 0..<4 { raw[index] = address[index] }
-            }
+            var guest = VMNetwork.inAddr(address)
             status = vmnet_network_configuration_add_dhcp_reservation(configuration, &etherAddress, &guest)
             guard status == .VMNET_SUCCESS else {
                 throw VMNetworkError.vmnet("DHCP-Reservierung", Int(status.rawValue))
@@ -129,6 +131,14 @@ public final class VMNetwork {
         let subnetBytes = withUnsafeBytes(of: &subnet.s_addr) { Array($0) }
         let maskBytes = withUnsafeBytes(of: &mask.s_addr) { Array($0) }
         return GuestNetworkAddressing.from(network: subnetBytes, mask: maskBytes, reserveGuest: reserveGuest)
+    }
+
+    static func inAddr(_ bytes: [UInt8]) -> in_addr {
+        var result = in_addr()
+        withUnsafeMutableBytes(of: &result.s_addr) { raw in
+            for index in 0..<4 { raw[index] = bytes[index] }
+        }
+        return result
     }
 
     static func bytes(_ dotted: String) -> [UInt8]? {
