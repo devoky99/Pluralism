@@ -1,0 +1,39 @@
+Building for production...
+[Planning deferred tasks]
+[28 / 47]
+[29 / 48] PluralismCore
+[37 / 83]
+[42 / 83]
+[47 / 83]
+[49 / 83]
+[53 / 83]
+[55 / 83]
+[58 / 83]
+[61 / 83]
+[63 / 83]
+[64 / 83]
+[65 / 83] PluralismCore
+[72 / 84] PluralismNet
+[75 / 86] PluralismNet
+[82 / 87] Pluralism-product
+[90 / 123]
+[96 / 123]
+[100 / 123]
+[102 / 123]
+[103 / 123]
+[108 / 123]
+[110 / 123]
+[112 / 123]
+[115 / 123]
+[118 / 123]
+[119 / 123] Pluralism-product
+[121 / 123] Pluralism-product
+[122 / 123] Pluralism-product
+Build complete! (28.82 sec)
+Building for production...
+[Planning deferred tasks]
+[6 / 11] pluralism-netcheck-product
+[8 / 12] pluralism-netcheck-product
+[10 / 12] pluralism-netcheck-product
+[11 / 12] pluralism-netcheck-product
+Build complete! (3.45 sec)

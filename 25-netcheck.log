@@ -1,0 +1,66 @@
+com.apple.security.device.audio-input com.apple.security.hypervisor com.apple.security.virtualization 
+## A Internet und Mac, fester Bereich, alles prüfen
+uid 501
+Netz für 52:54:00:b7:5d:9d anlegen
+DHCP-Discover 1
+{"ack":"ACK","connections":1,"detected":"192.168.160.2","dns":"rcode 0, 1 Antworten","droppedToGuest":5,"expected":"192.168.160.2","fromGuest":10,"gatewayARP":true,"macPing":true,"macPingOutput":"2 packets transmitted, 2 packets received, 0.0% packet loss","macToVM":false,"macToVMError":"65: No route to host","mtu":1500,"offer":"192.168.160.2","ok":true,"others":[],"peakBuffered":1314,"ping":true,"pingsAnswered":2,"reservationMatches":true,"server":"192.168.160.1","step":"done","subnet":"192.168.160.0\/24","tcp":"SYN-ACK","toGuest":45,"uid":501,"vmToMac":true}
+## B Nur Mac, fester Bereich, alles prüfen
+uid 501
+Netz für 52:54:00:6d:89:7d anlegen
+DHCP-Discover 1
+{"ack":"ACK","connections":1,"detected":"192.168.200.2","dns":"-","droppedToGuest":3,"expected":"192.168.200.2","fromGuest":9,"gatewayARP":true,"macPing":true,"macPingOutput":"2 packets transmitted, 2 packets received, 0.0% packet loss","macToVM":false,"macToVMError":"65: No route to host","mtu":1500,"offer":"192.168.200.2","ok":true,"others":[],"peakBuffered":1630,"ping":false,"pingsAnswered":2,"reservationMatches":true,"server":"192.168.200.1","step":"done","subnet":"192.168.200.0\/24","tcp":"-","toGuest":57,"uid":501,"vmToMac":true}
+## C vmnet wählt den Bereich
+uid 501
+Netz für 52:54:00:30:0f:39 anlegen
+DHCP-Discover 1
+{"ack":"ACK","connections":1,"detected":"192.168.64.2","droppedToGuest":3,"expected":"dynamisch","fromGuest":3,"gatewayARP":true,"mtu":1500,"offer":"192.168.64.2","ok":true,"others":[],"peakBuffered":346,"reservationMatches":true,"server":"192.168.64.1","step":"done","subnet":"192.168.64.0\/24","toGuest":3,"uid":501}
+## D VM dreimal starten (App)
+uid 501
+Netz für 52:54:00:dc:60:e3 anlegen
+DHCP-Discover 1
+Netz für 52:54:00:dc:60:e3 anlegen
+DHCP-Discover 1
+Netz für 52:54:00:dc:60:e3 anlegen
+DHCP-Discover 1
+{"cycles":[{"error":"","notice":"","offer":"192.168.161.2","step":"done","subnet":"192.168.161.0\/24"},{"error":"","notice":"","offer":"192.168.161.2","step":"done","subnet":"192.168.161.0\/24"},{"error":"","notice":"","offer":"192.168.161.2","step":"done","subnet":"192.168.161.0\/24"}],"ok":true,"others":[],"uid":501}
+## E gleicher Bereich zweimal ohne Registry
+uid 501
+Netz für 52:54:00:a0:2b:37 anlegen
+DHCP-Discover 1
+Netz für 52:54:00:c4:27:30 anlegen
+DHCP-Discover 1
+{"cycles":[{"error":"","notice":"","offer":"192.168.98.2","step":"done","subnet":"192.168.98.0\/24"},{"error":"","notice":"","offer":"192.168.98.2","step":"done","subnet":"192.168.98.0\/24"}],"ok":true,"others":[],"uid":501}
+## F fester Bereich belegt, Ausweg (App)
+uid 501
+Netz für 52:54:00:2a:b1:d4 anlegen
+DHCP-Discover 1
+{"ack":"ACK","connections":1,"detected":"192.168.64.3","droppedToGuest":4,"expected":"dynamisch","fromGuest":3,"gatewayARP":true,"mtu":1500,"notice":"Der feste Adressbereich 192.168.162.0\/24 ist gerade belegt (etwa durch ein anderes Programm oder ein VPN). Die VM bekommt diesmal eine Adresse aus 192.168.64.0\/24.","offer":"192.168.64.3","ok":true,"others":[],"peakBuffered":346,"reservationMatches":true,"server":"192.168.64.1","step":"done","subnet":"192.168.64.0\/24","toGuest":3,"uid":501}
+## G zwei andere VMs laufen (App)
+uid 501
+Netz für 52:54:00:b6:0f:03 anlegen
+DHCP-Discover 1
+{"ack":"ACK","connections":1,"detected":"192.168.163.2","droppedToGuest":5,"expected":"192.168.163.2","fromGuest":3,"gatewayARP":true,"mtu":1500,"offer":"192.168.163.2","ok":true,"others":["192.168.64.0\/24","192.168.65.0\/24"],"peakBuffered":346,"reservationMatches":true,"server":"192.168.163.1","step":"done","subnet":"192.168.163.0\/24","toGuest":4,"uid":501}
+## H echtes QEMU an der Brücke
+uid 501
+{"connections":1,"netdev":"stream,id=net0,server=off,addr.type=unix,addr.path=\/tmp\/pluralism-netcheck-4075\/q.sock,reconnect-ms=1000","ok":true,"output":"qemu-system-aarch64: terminating on signal 15 from pid 4075 (<unknown process>)\n","running":true,"step":"qemu","uid":501}
+## H2 QEMU legt das Netz selbst an (wie UTM)
+uid 501
+{"hostInterface":"bridge100","netdev":"vmnet-shared,id=net0,start-address=192.168.165.1,end-address=192.168.165.254,subnet-mask=255.255.255.0","ok":true,"output":"qemu-system-aarch64: terminating on signal 15 from pid 4343 (<unknown process>)\n","running":true,"step":"qemu-vmnet","uid":501}
+## H3 QEMU legt das Netz selbst an, Nur Mac
+uid 501
+{"hostInterface":"bridge100","netdev":"vmnet-host,id=net0,start-address=192.168.205.1,end-address=192.168.205.254,subnet-mask=255.255.255.0","ok":true,"output":"qemu-system-aarch64: terminating on signal 15 from pid 4354 (<unknown process>)\n","running":true,"step":"qemu-vmnet","uid":501}
+## I alte vmnet-Schnittstelle (QEMU vmnet-shared)
+uid 501
+{"mtu":1500,"ok":true,"start":"192.168.66.1","status":1000,"step":"legacy","uid":501}
+## J alte vmnet-Schnittstelle, Nur Mac
+uid 501
+{"mtu":1500,"ok":true,"start":"192.168.128.1","status":1000,"step":"legacy","uid":501}
+## K ohne Entitlement
+uid 501
+Netz für 52:54:00:a2:05:90 anlegen
+{"error":"vmnet: Netz anlegen fehlgeschlagen (zu wenig Speicher oder fehlende Berechtigung, Code 1002).","ok":false,"others":[],"step":"network","uid":501}
+exit=2
+## L alte Schnittstelle ohne Entitlement
+uid 501
+{"mtu":0,"ok":false,"start":"-","status":1001,"step":"legacy","uid":501}
+exit=8

@@ -1,0 +1,38 @@
+==> swift build (release)
+Building for production...
+[Planning deferred tasks]
+[4 / 13] PluralismCore
+[6 / 14] PluralismCore
+[9 / 16] PluralismNet
+[11 / 17] PluralismNet
+Build complete! (8.22 sec)
+==> App-Bundle zusammenstellen
+==> QEMU-Laufzeit einpacken (/Users/runner/work/Pluralism/Pluralism/build/runtime)
+==> Laufzeit signieren
+/Users/runner/work/Pluralism/Pluralism/build/Pluralism.app/Contents/Resources/Runtime/lib/libcrypto.4.dylib: replacing existing signature
+/Users/runner/work/Pluralism/Pluralism/build/Pluralism.app/Contents/Resources/Runtime/lib/libslirp.0.dylib: replacing existing signature
+/Users/runner/work/Pluralism/Pluralism/build/Pluralism.app/Contents/Resources/Runtime/lib/libpcre2-8.0.dylib: replacing existing signature
+/Users/runner/work/Pluralism/Pluralism/build/Pluralism.app/Contents/Resources/Runtime/lib/libglib-2.0.0.dylib: replacing existing signature
+/Users/runner/work/Pluralism/Pluralism/build/Pluralism.app/Contents/Resources/Runtime/lib/libjson-glib-1.0.0.dylib: replacing existing signature
+/Users/runner/work/Pluralism/Pluralism/build/Pluralism.app/Contents/Resources/Runtime/lib/libgobject-2.0.0.dylib: replacing existing signature
+/Users/runner/work/Pluralism/Pluralism/build/Pluralism.app/Contents/Resources/Runtime/lib/libgmodule-2.0.0.dylib: replacing existing signature
+/Users/runner/work/Pluralism/Pluralism/build/Pluralism.app/Contents/Resources/Runtime/lib/libintl.8.dylib: replacing existing signature
+/Users/runner/work/Pluralism/Pluralism/build/Pluralism.app/Contents/Resources/Runtime/lib/libswtpm_libtpms.0.dylib: replacing existing signature
+/Users/runner/work/Pluralism/Pluralism/build/Pluralism.app/Contents/Resources/Runtime/lib/libtpms.0.dylib: replacing existing signature
+/Users/runner/work/Pluralism/Pluralism/build/Pluralism.app/Contents/Resources/Runtime/lib/libpixman-1.0.dylib: replacing existing signature
+/Users/runner/work/Pluralism/Pluralism/build/Pluralism.app/Contents/Resources/Runtime/lib/libgio-2.0.0.dylib: replacing existing signature
+/Users/runner/work/Pluralism/Pluralism/build/Pluralism.app/Contents/Resources/Runtime/bin/qemu-img: replacing existing signature
+/Users/runner/work/Pluralism/Pluralism/build/Pluralism.app/Contents/Resources/Runtime/bin/swtpm: replacing existing signature
+/Users/runner/work/Pluralism/Pluralism/build/Pluralism.app/Contents/Resources/Runtime/bin/qemu-system-aarch64: replacing existing signature
+==> App ad hoc signieren
+/Users/runner/work/Pluralism/Pluralism/build/Pluralism.app: replacing existing signature
+/Users/runner/work/Pluralism/Pluralism/build/Pluralism.app: valid on disk
+/Users/runner/work/Pluralism/Pluralism/build/Pluralism.app: satisfies its Designated Requirement
+    Entitlement com.apple.security.virtualization ist gesetzt.
+    QEMU hat das Hypervisor-Entitlement.
+    QEMU darf vmnet ohne Root nutzen (Virtualization-Entitlement).
+QEMU emulator version 11.1.2
+181M	/Users/runner/work/Pluralism/Pluralism/build/Pluralism.app
+==> Fertig: /Users/runner/work/Pluralism/Pluralism/build/Pluralism.app
+    Starten mit: open "/Users/runner/work/Pluralism/Pluralism/build/Pluralism.app"
+-rw-r--r--  1 runner  staff    14M Oct 15 19:42 Pluralism.zip
