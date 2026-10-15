@@ -4,7 +4,7 @@ import PluralismCore
 import vmnet
 
 /// Fehler beim Aufbau des Netzwerks.
-public enum VMNetworkError: Error, LocalizedError, Equatable {
+public enum VMNetworkError: Error, LocalizedError, Equatable, Sendable {
     case vmnet(String, Int)
     case invalidMAC(String)
     case invalidAddress(String)
@@ -60,7 +60,9 @@ public enum VMNetworkMode: Sendable {
 /// - Ohne eigenen Bereich vergibt vmnet beim Anlegen den nächsten freien Bereich
 ///   (192.168.64.0/24, dann .65, .66 …; „Nur Mac“ ab 192.168.128.0/24).
 /// - Der einzige Gast im Netz bekommt per DHCP die .2.
-public final class VMNetwork {
+///
+/// Unveränderlich nach dem Anlegen; vmnet-Objekte dürfen aus beliebigen Threads benutzt werden.
+public final class VMNetwork: @unchecked Sendable {
     public let ref: vmnet_network_ref
     public let mode: VMNetworkMode
     /// Tatsächlicher Bereich. `guestAddress` ist nur gesetzt, wenn eine Reservierung besteht.

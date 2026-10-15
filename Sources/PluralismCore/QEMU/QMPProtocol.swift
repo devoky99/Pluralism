@@ -45,7 +45,7 @@ public enum QMPCommand: Equatable, Sendable {
 }
 
 /// Eine Nachricht von QEMU.
-public enum QMPMessage: Equatable {
+public enum QMPMessage: Equatable, Sendable {
     case greeting(version: String?)
     case success(id: Int?, status: String?)
     case failure(id: Int?, description: String)

@@ -1,17 +1,24 @@
 import Darwin
 import Foundation
+import Synchronization
 
 /// Kleine, blockierende Unix-Domain-Socket-Verbindung (für QMP und VNC).
-final class UnixSocket {
-    private(set) var fd: Int32
+///
+/// Nebenläufigkeit: Ein Thread liest, andere schreiben. `fd` ändert sich nie; geschlossen wird der
+/// Deskriptor erst in `deinit`, wenn niemand mehr liest. `close()` weckt einen blockierten Leser nur
+/// über `shutdown` auf. So kann der Deskriptor nicht schon wiederverwendet sein, während ein anderer
+/// Thread noch darauf liest. Schreiben ist über `writeLock` serialisiert.
+final class UnixSocket: @unchecked Sendable {
+    let fd: Int32
     private let writeLock = NSLock()
+    private let isShutDown = Atomic<Bool>(false)
 
     private init(fd: Int32) {
         self.fd = fd
     }
 
     deinit {
-        close()
+        Darwin.close(fd)
     }
 
     enum SocketError: LocalizedError {
@@ -122,7 +129,7 @@ final class UnixSocket {
     func writeAll(_ bytes: [UInt8]) throws {
         writeLock.lock()
         defer { writeLock.unlock() }
-        guard fd >= 0 else { throw SocketError.closed }
+        guard !isShutDown.load(ordering: .acquiring) else { throw SocketError.closed }
         var offset = 0
         try bytes.withUnsafeBytes { raw in
             guard let base = raw.baseAddress else { return }
@@ -139,11 +146,11 @@ final class UnixSocket {
         }
     }
 
+    /// Beendet die Verbindung in beide Richtungen. Blockierte Leser kehren mit „geschlossen“ zurück.
     func close() {
-        if fd >= 0 {
+        let (exchanged, _) = isShutDown.compareExchange(expected: false, desired: true, ordering: .acquiringAndReleasing)
+        if exchanged {
             Darwin.shutdown(fd, SHUT_RDWR)
-            Darwin.close(fd)
-            fd = -1
         }
     }
 }

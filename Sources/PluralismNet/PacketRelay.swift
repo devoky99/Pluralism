@@ -9,7 +9,11 @@ import vmnet
 /// QEMU läuft mit `-netdev dgram`: Jeder Ethernet-Rahmen des Gasts kommt als ein Datagramm
 /// über einen Unix-Socket bei Pluralism an und geht unverändert an vmnet, und umgekehrt.
 /// So bekommt die Windows-VM Apples schnellen Netzstack, ohne dass QEMU Root-Rechte braucht.
-public final class PacketRelay {
+///
+/// Nebenläufigkeit: Aller veränderliche Zustand gehört der seriellen `queue`. `start()` und `stop()`
+/// werden von außen aufgerufen und greifen über `queue.sync` zu. Die Rückrufe `frameObserver` und
+/// `onGuestAddress` werden vor `start()` gesetzt und danach nur noch auf der `queue` gelesen.
+public final class PacketRelay: @unchecked Sendable {
     public struct Statistics: Equatable, Sendable {
         public var framesToGuest: UInt64 = 0
         public var framesFromGuest: UInt64 = 0
@@ -25,10 +29,10 @@ public final class PacketRelay {
 
     /// Wird (auf einer internen Queue) aufgerufen, wenn ein Rahmen vom Netz für den Gast ankommt.
     /// Nur für Prüfprogramme gedacht; normalerweise gehen die Rahmen direkt an QEMU.
-    public var frameObserver: (([UInt8]) -> Void)?
+    public var frameObserver: (@Sendable ([UInt8]) -> Void)?
 
     /// Wird (auf einer internen Queue) aufgerufen, sobald der Gast eine neue IPv4-Adresse benutzt.
-    public var onGuestAddress: ((String) -> Void)?
+    public var onGuestAddress: (@Sendable (String) -> Void)?
 
     private let queue = DispatchQueue(label: "pluralism.net.relay", qos: .userInteractive)
     private var interface: interface_ref?

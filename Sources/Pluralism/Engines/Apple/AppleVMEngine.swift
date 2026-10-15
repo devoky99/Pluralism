@@ -6,7 +6,8 @@ import Virtualization
 
 /// Engine für Linux-ARM64-Gäste auf Apples Virtualization.framework.
 /// Die VM läuft auf der Main-Queue (Standard von `VZVirtualMachine(configuration:)`),
-/// dadurch kommen auch alle Rückmeldungen auf dem Hauptthread an.
+/// dadurch kommen alle Rückmeldungen auf dem Main Actor an.
+@MainActor
 final class AppleVMEngine: NSObject, VMEngine, VZVirtualMachineDelegate {
     let bundle: VMBundle
     private(set) var config: VMConfiguration
@@ -262,7 +263,7 @@ final class AppleVMEngine: NSObject, VMEngine, VZVirtualMachineDelegate {
         }
     }
 
-    func hotPlugImage(_ url: URL, completion: @escaping (Error?) -> Void) {
+    func hotPlugImage(_ url: URL, completion: @escaping @MainActor (Error?) -> Void) {
         guard let vm = virtualMachine, let controller = vm.usbControllers.first else {
             completion(PluralismError.message("Die VM läuft nicht oder hat keinen USB-Controller."))
             return
@@ -287,13 +288,18 @@ final class AppleVMEngine: NSObject, VMEngine, VZVirtualMachineDelegate {
     }
 
     // MARK: VZVirtualMachineDelegate
+    // Virtualization ruft den Delegate auf der Queue der VM auf, hier die Main-Queue.
 
-    func guestDidStop(_ virtualMachine: VZVirtualMachine) {
-        didStop(error: nil)
+    nonisolated func guestDidStop(_ virtualMachine: VZVirtualMachine) {
+        MainActor.assumeIsolated {
+            didStop(error: nil)
+        }
     }
 
-    func virtualMachine(_ virtualMachine: VZVirtualMachine, didStopWithError error: Error) {
-        didStop(error: error)
+    nonisolated func virtualMachine(_ virtualMachine: VZVirtualMachine, didStopWithError error: Error) {
+        MainActor.assumeIsolated {
+            didStop(error: error)
+        }
     }
 
     private func didStop(error: Error?) {

@@ -1,13 +1,15 @@
 import Foundation
 
-/// Lädt das Treiber-Abbild virtio-win herunter.
+/// Lädt das Treiber-Abbild virtio-win herunter. Zustand auf dem Main Actor, URLSession meldet
+/// sich auf eigenen Threads und springt für jede Änderung zurück.
+@MainActor
 final class DownloadService: ObservableObject {
     /// virtio-win (Red Hat/Fedora, BSD-Lizenz): ARM64-Treiber für Netzwerk, Speicher, Anzeige usw.
-    static let virtioWinURL = URL(string: "https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/stable-virtio/virtio-win.iso")!
+    nonisolated static let virtioWinURL = URL(string: "https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/stable-virtio/virtio-win.iso")!
     /// Offizielle Download-Seite von Microsoft für Windows 11 ARM64.
-    static let windowsARMPageURL = URL(string: "https://www.microsoft.com/de-de/software-download/windows11arm64")!
+    nonisolated static let windowsARMPageURL = URL(string: "https://www.microsoft.com/de-de/software-download/windows11arm64")!
 
-    static var downloadsDirectory: URL {
+    nonisolated static var downloadsDirectory: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         return base.appendingPathComponent("Pluralism/Downloads", isDirectory: true)
     }
@@ -17,14 +19,16 @@ final class DownloadService: ObservableObject {
 
     private var tasks: [String: URLSessionDownloadTask] = [:]
     private var observations: [String: NSKeyValueObservation] = [:]
+    private var completions: [String: (URL) -> Void] = [:]
 
     func isRunning(_ id: String) -> Bool { tasks[id] != nil }
 
     func download(id: String, from url: URL, fileName: String, completion: @escaping (URL) -> Void) {
         guard tasks[id] == nil else { return }
+        completions[id] = completion
         let destination = DownloadService.downloadsDirectory.appendingPathComponent(fileName)
         let task = URLSession.shared.downloadTask(with: url) { [weak self] tempURL, response, error in
-            var result: Result<URL, Error>
+            let result: Result<URL, Error>
             if let error {
                 result = .failure(error)
             } else if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
@@ -44,22 +48,23 @@ final class DownloadService: ObservableObject {
             } else {
                 result = .failure(PluralismError.message("Download ohne Datei beendet."))
             }
-            DispatchQueue.main.async {
+            MainQueue.async {
                 guard let self else { return }
+                let completion = self.completions.removeValue(forKey: id)
                 self.tasks[id] = nil
                 self.observations[id] = nil
                 self.progress[id] = nil
                 switch result {
                 case .success(let url):
-                    completion(url)
+                    completion?(url)
                 case .failure(let error):
                     self.errors[id] = error.localizedDescription
                 }
             }
         }
-        observations[id] = task.progress.observe(\.fractionCompleted, options: [.new]) { [weak self] progress, _ in
+        observations[id] = task.progress.observe(\.fractionCompleted, options: [.new]) { @Sendable [weak self] progress, _ in
             let value = progress.fractionCompleted
-            DispatchQueue.main.async {
+            MainQueue.async {
                 if self?.tasks[id] != nil {
                     self?.progress[id] = value
                 }
@@ -74,6 +79,7 @@ final class DownloadService: ObservableObject {
     func cancel(_ id: String) {
         tasks[id]?.cancel()
         tasks[id] = nil
+        completions[id] = nil
         observations[id] = nil
         progress[id] = nil
     }

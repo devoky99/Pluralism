@@ -69,9 +69,9 @@ enum ActiveNetwork: Equatable {
     }
 }
 
-/// Gemeinsame Schnittstelle der beiden Engines.
-/// Alle Methoden werden auf dem Hauptthread aufgerufen, `onStateChange` meldet ebenfalls
-/// auf dem Hauptthread.
+/// Gemeinsame Schnittstelle der beiden Engines. Engines gehören dem Main Actor: Sie werden von der
+/// Oberfläche gesteuert und melden ihren Zustand an sie. Lange Arbeit verlagern sie selbst.
+@MainActor
 protocol VMEngine: AnyObject {
     var state: VMRunState { get }
     /// Netz der laufenden VM (für die Anzeige).
@@ -105,7 +105,7 @@ protocol VMEngine: AnyObject {
     /// Strg+Alt+Entf an den Gast schicken (nur QEMU).
     func sendCtrlAltDelete()
     /// Ein Abbild (ISO) während des Betriebs als USB-Speicher anhängen (Apple-Engine, macOS 15).
-    func hotPlugImage(_ url: URL, completion: @escaping (Error?) -> Void)
+    func hotPlugImage(_ url: URL, completion: @escaping @MainActor (Error?) -> Void)
     var supportsHotPlug: Bool { get }
 
     /// Beim Beenden der App: alles sofort stoppen (keine Kindprozesse zurücklassen).

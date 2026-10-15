@@ -15,12 +15,6 @@
 
 import PackageDescription
 
-// Sprachmodus Swift 6: vollständige Prüfung auf Datenrennen (siehe CLAUDE.md).
-// Übergang: vorerst Swift 5 mit strenger Prüfung als Warnungen, um alle Stellen zu sehen.
-let strict: [SwiftSetting] = [
-    .enableUpcomingFeature("StrictConcurrency")
-]
-
 var products: [Product] = [
     .library(name: "PluralismCore", targets: ["PluralismCore"])
 ]
@@ -28,14 +22,12 @@ var products: [Product] = [
 var targets: [Target] = [
     .target(
         name: "PluralismCore",
-        path: "Sources/PluralismCore",
-        swiftSettings: strict
+        path: "Sources/PluralismCore"
     ),
     .testTarget(
         name: "PluralismCoreTests",
         dependencies: ["PluralismCore"],
-        path: "Tests/PluralismCoreTests",
-        swiftSettings: strict
+        path: "Tests/PluralismCoreTests"
     )
 ]
 
@@ -47,7 +39,6 @@ targets.append(contentsOf: [
         name: "PluralismNet",
         dependencies: ["PluralismCore"],
         path: "Sources/PluralismNet",
-        swiftSettings: strict,
         linkerSettings: [
             .linkedFramework("vmnet")
         ]
@@ -56,7 +47,6 @@ targets.append(contentsOf: [
         name: "Pluralism",
         dependencies: ["PluralismCore", "PluralismNet"],
         path: "Sources/Pluralism",
-        swiftSettings: strict,
         linkerSettings: [
             .linkedFramework("Virtualization"),
             .linkedFramework("AppKit"),
@@ -66,8 +56,7 @@ targets.append(contentsOf: [
     .executableTarget(
         name: "PluralismNetCheck",
         dependencies: ["PluralismCore", "PluralismNet"],
-        path: "Sources/PluralismNetCheck",
-        swiftSettings: strict
+        path: "Sources/PluralismNetCheck"
     )
 ])
 #endif
@@ -79,5 +68,7 @@ let package = Package(
     ],
     products: products,
     targets: targets,
-    swiftLanguageModes: [.v5]
+    // Sprachmodus Swift 6: vollständige Prüfung auf Datenrennen (siehe CLAUDE.md und
+    // „Version Compatibility“ in docs/reference/swift-6.4-book.md).
+    swiftLanguageModes: [.v6]
 )

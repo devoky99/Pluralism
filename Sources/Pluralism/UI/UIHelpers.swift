@@ -64,6 +64,7 @@ enum Format {
 }
 
 /// Datei- und Ordnerauswahl über NSOpenPanel.
+@MainActor
 enum FilePicker {
     static func chooseFile(title: String, extensions: [String]) -> URL? {
         let panel = NSOpenPanel()

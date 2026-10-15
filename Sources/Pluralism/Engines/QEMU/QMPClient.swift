@@ -1,21 +1,27 @@
 import Foundation
 import PluralismCore
+import Synchronization
 
 /// Steuerverbindung zu QEMU (QMP). Liest Ereignisse in einem eigenen Thread und meldet
-/// sie auf dem Hauptthread.
-final class QMPClient {
+/// sie auf dem Main Actor.
+///
+/// Nebenläufigkeit: `connect` läuft auf einem Hintergrundthread, bevor das Objekt geteilt wird.
+/// Danach gehören `lineBuffer` und `pendingLines` allein dem Lesethread, `nextID` allein der
+/// `sendQueue`. Der Socket ändert sich nach `connect` nicht mehr. `running` ist atomar.
+/// Die Rückrufe gehören dem Main Actor.
+final class QMPClient: @unchecked Sendable {
     private var socket: UnixSocket?
     private var lineBuffer = LineBuffer()
     private var pendingLines: [Data] = []
     private let sendQueue = DispatchQueue(label: "pluralism.qmp.send")
     private var nextID = 1
-    private var running = false
+    private let running = Atomic<Bool>(false)
 
     /// Name des Ereignisses, z. B. "SHUTDOWN", "STOP", "RESUME", "POWERDOWN".
-    var onEvent: ((String) -> Void)?
-    var onDisconnect: (() -> Void)?
+    @MainActor var onEvent: ((String) -> Void)?
+    @MainActor var onDisconnect: (() -> Void)?
     /// Status aus query-status ("running", "paused", ...).
-    var onStatus: ((String) -> Void)?
+    @MainActor var onStatus: ((String) -> Void)?
     private(set) var qemuVersion: String?
 
     /// Verbindet (mit Wiederholungen) und schaltet den Befehlsmodus frei. Blockiert.
@@ -41,7 +47,7 @@ final class QMPClient {
             }
         }
 
-        running = true
+        running.store(true, ordering: .releasing)
         let thread = Thread { [weak self] in
             self?.readLoop()
         }
@@ -59,15 +65,15 @@ final class QMPClient {
     }
 
     private func readLoop() {
-        while running {
+        while running.load(ordering: .acquiring) {
             do {
                 let line = try nextLine()
                 guard let message = QMPMessage.parse(line) else { continue }
                 switch message {
                 case .event(let name):
-                    DispatchQueue.main.async { [weak self] in self?.onEvent?(name) }
+                    MainQueue.async { [weak self] in self?.onEvent?(name) }
                 case .success(_, let status?):
-                    DispatchQueue.main.async { [weak self] in self?.onStatus?(status) }
+                    MainQueue.async { [weak self] in self?.onStatus?(status) }
                 default:
                     break
                 }
@@ -75,8 +81,8 @@ final class QMPClient {
                 break
             }
         }
-        running = false
-        DispatchQueue.main.async { [weak self] in self?.onDisconnect?() }
+        running.store(false, ordering: .releasing)
+        MainQueue.async { [weak self] in self?.onDisconnect?() }
     }
 
     func send(_ command: QMPCommand) {
@@ -88,9 +94,9 @@ final class QMPClient {
         }
     }
 
+    /// Beendet die Verbindung. Der Lesethread endet danach von selbst.
     func close() {
-        running = false
+        running.store(false, ordering: .releasing)
         socket?.close()
-        socket = nil
     }
 }

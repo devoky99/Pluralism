@@ -10,6 +10,8 @@ struct AlertItem: Identifiable {
 }
 
 /// Zentraler Zustand der App: VM-Bibliothek, Sitzungen, QEMU-Werkzeuge, Downloads.
+/// Gehört dem Main Actor; Plattenarbeit läuft über `Background`.
+@MainActor
 final class AppModel: ObservableObject {
     static let shared = AppModel()
 
@@ -108,25 +110,23 @@ final class AppModel: ObservableObject {
     func refreshToolchain() {
         isDetectingToolchain = true
         let override = UserDefaults.standard.string(forKey: PreferenceKeys.qemuPathOverride)
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let report = ToolchainDetector.detect(qemuOverride: override)
-            DispatchQueue.main.async {
-                self?.toolchainReport = report
-                self?.isDetectingToolchain = false
-            }
+        Task {
+            let report = await Background.run { ToolchainDetector.detect(qemuOverride: override) }
+            toolchainReport = report
+            isDetectingToolchain = false
         }
     }
 
     // MARK: VMs anlegen, ändern, löschen
 
-    struct NewVMRequest {
+    struct NewVMRequest: Sendable {
         var configuration: VMConfiguration
         var password: String
         var windowsISO: URL?
         var virtioISO: URL?
     }
 
-    func createVM(_ request: NewVMRequest, completion: @escaping (Result<VMConfiguration, Error>) -> Void) {
+    func createVM(_ request: NewVMRequest, completion: @escaping @MainActor (Result<VMConfiguration, Error>) -> Void) {
         let library = self.library
         let toolchain = self.toolchain
         var prepared = request.configuration
@@ -134,49 +134,54 @@ final class AppModel: ObservableObject {
             prepared.network.slot = allocateSlot()
         }
         let initialConfig = prepared
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            var config = initialConfig
-            let result: Result<VMConfiguration, Error>
+        Task {
+            let result = await Background.run { AppModel.buildVM(initialConfig, request: request, library: library, toolchain: toolchain) }
+            if case .success(let created) = result {
+                reload()
+                selection = created.id
+            }
+            completion(result)
+        }
+    }
+
+    /// Legt Bundle, Platte und bei Windows das Setup-Medium an (blockierend, Hintergrund).
+    private nonisolated static func buildVM(_ initialConfig: VMConfiguration, request: NewVMRequest,
+                                            library: VMLibrary, toolchain: QEMUToolchain?) -> Result<VMConfiguration, Error> {
+        var config = initialConfig
+        let result: Result<VMConfiguration, Error>
+        do {
+            let bundle = try library.createBundle(for: config)
             do {
-                let bundle = try library.createBundle(for: config)
-                do {
-                    try DiskImageService.createDisk(at: bundle.diskURL(for: config), sizeGiB: config.disk.sizeGiB,
-                                                    format: config.disk.format, toolchain: toolchain)
-                    if config.guestOS == .windows {
-                        // Schnelle virtio-Platte nur, wenn Setup den Treiber viostor automatisch bekommt.
-                        // Bei manueller Installation bleibt NVMe, das Windows ohne Treiber kennt.
-                        config.disk.bus = .nvme
-                        if config.windows.unattend.enabled {
-                            let media = try GuestMediaBuilder.buildWindowsSetupMedia(
-                                bundle: bundle,
-                                settings: config.windows.unattend,
-                                password: request.password,
-                                enableRemoteDesktop: config.windows.rdpHostPort != nil,
-                                windowsISO: request.windowsISO,
-                                virtioISO: request.virtioISO)
-                            config.media.hasUnattendMedia = true
-                            if media.copiedDrivers.contains("viostor") {
-                                config.disk.bus = .virtio
-                            }
+                try DiskImageService.createDisk(at: bundle.diskURL(for: config), sizeGiB: config.disk.sizeGiB,
+                                                format: config.disk.format, toolchain: toolchain)
+                if config.guestOS == .windows {
+                    // Schnelle virtio-Platte nur, wenn Setup den Treiber viostor automatisch bekommt.
+                    // Bei manueller Installation bleibt NVMe, das Windows ohne Treiber kennt.
+                    config.disk.bus = .nvme
+                    if config.windows.unattend.enabled {
+                        let media = try GuestMediaBuilder.buildWindowsSetupMedia(
+                            bundle: bundle,
+                            settings: config.windows.unattend,
+                            password: request.password,
+                            enableRemoteDesktop: config.windows.rdpHostPort != nil,
+                            windowsISO: request.windowsISO,
+                            virtioISO: request.virtioISO)
+                        config.media.hasUnattendMedia = true
+                        if media.copiedDrivers.contains("viostor") {
+                            config.disk.bus = .virtio
                         }
                     }
-                    try bundle.save(config)
-                } catch {
-                    try? FileManager.default.removeItem(at: bundle.url)
-                    throw error
                 }
-                result = .success(config)
+                try bundle.save(config)
             } catch {
-                result = .failure(error)
+                try? FileManager.default.removeItem(at: bundle.url)
+                throw error
             }
-            DispatchQueue.main.async { [weak self] in
-                if case .success(let created) = result {
-                    self?.reload()
-                    self?.selection = created.id
-                }
-                completion(result)
-            }
+            result = .success(config)
+        } catch {
+            result = .failure(error)
         }
+        return result
     }
 
     func save(_ config: VMConfiguration) throws {
@@ -212,16 +217,14 @@ final class AppModel: ObservableObject {
             return
         }
         let library = self.library
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let result = Result { try library.clone(config, newName: "\(config.name) Kopie") }
-            DispatchQueue.main.async { [weak self] in
-                switch result {
-                case .success(let copy):
-                    self?.reload()
-                    self?.selection = copy.id
-                case .failure(let error):
-                    self?.show(error, title: "Klonen fehlgeschlagen")
-                }
+        Task {
+            let result = await Background.run { Result { try library.clone(config, newName: "\(config.name) Kopie") } }
+            switch result {
+            case .success(let copy):
+                reload()
+                selection = copy.id
+            case .failure(let error):
+                show(error, title: "Klonen fehlgeschlagen")
             }
         }
     }

@@ -3,12 +3,16 @@ import Foundation
 import PluralismCore
 
 /// Ein Hintergrundprozess (QEMU oder swtpm), dessen Ausgabe in eine Logdatei läuft.
-final class ManagedProcess {
+///
+/// Nebenläufigkeit: Alle gespeicherten Eigenschaften werden im Initialisierer gesetzt und danach
+/// nicht mehr geändert. `Process` und `FileHandle` sind für Zugriffe aus mehreren Threads gedacht.
+/// Der Rückruf `onExit` gehört dem Main Actor.
+final class ManagedProcess: @unchecked Sendable {
     let plan: ProcessPlan
     private let process = Process()
     private let logHandle: FileHandle?
-    /// Wird auf dem Hauptthread mit dem Exit-Status aufgerufen.
-    var onExit: ((Int32) -> Void)?
+    /// Wird auf dem Main Actor mit dem Exit-Status aufgerufen.
+    @MainActor var onExit: ((Int32) -> Void)?
 
     init(plan: ProcessPlan, logURL: URL) throws {
         self.plan = plan
@@ -33,7 +37,7 @@ final class ManagedProcess {
         process.standardInput = FileHandle.nullDevice
         process.terminationHandler = { [weak self] finished in
             let status = finished.terminationStatus
-            DispatchQueue.main.async {
+            MainQueue.async {
                 self?.onExit?(status)
             }
         }

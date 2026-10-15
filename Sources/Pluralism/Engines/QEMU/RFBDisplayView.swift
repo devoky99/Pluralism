@@ -82,7 +82,7 @@ final class RFBDisplayView: NSView {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         guard window != nil else { return }
-        DispatchQueue.main.async { [weak self] in
+        Task { [weak self] in
             guard let self else { return }
             self.window?.makeFirstResponder(self)
         }

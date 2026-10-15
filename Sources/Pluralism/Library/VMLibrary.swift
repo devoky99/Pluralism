@@ -2,7 +2,7 @@ import Foundation
 import PluralismCore
 
 /// Der Ordner mit allen VMs (`<UUID>.pluralismvm`).
-final class VMLibrary {
+struct VMLibrary: Sendable {
     let directory: URL
 
     init(directory: URL) {

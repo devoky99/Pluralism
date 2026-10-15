@@ -2,9 +2,10 @@ import AppKit
 import CoreGraphics
 import Foundation
 import PluralismCore
+import Synchronization
 
 /// Liest und schreibt Bytes über den Unix-Socket für das RFB-Protokoll.
-private final class SocketByteStream: RFBByteSource, RFBByteSink {
+private final class SocketByteStream: RFBByteSource, RFBByteSink, Sendable {
     let socket: UnixSocket
 
     init(socket: UnixSocket) {
@@ -22,23 +23,28 @@ private final class SocketByteStream: RFBByteSource, RFBByteSink {
 
 /// Verbindung zum VNC-Server einer QEMU-VM. Hält das Bild der VM im Speicher und
 /// schickt Tastatur und Maus an den Gast. Eine Zwischenablage gibt es bewusst nicht.
-final class RFBConnection {
+///
+/// Nebenläufigkeit: `stream` und `client` werden in `connect` gesetzt, bevor der Lesethread startet,
+/// und danach nicht mehr geändert. Bildpuffer, Größe und `updateScheduled` schützt `lock`.
+/// `running` ist atomar. Die Rückrufe gehören dem Main Actor.
+final class RFBConnection: @unchecked Sendable {
     private var stream: SocketByteStream?
     private var client: RFBClientProtocol?
     private let sendQueue = DispatchQueue(label: "pluralism.rfb.send")
     private let lock = NSLock()
+    /// Bild der VM (BGRX, 32 Bit). Lebt bis zur nächsten Größenänderung oder `deinit`, nur unter `lock`.
     private var buffer: UnsafeMutableRawPointer?
     private var width = 0
     private var height = 0
-    private var running = false
+    private let running = Atomic<Bool>(false)
     private var updateScheduled = false
 
-    /// Neues Bild verfügbar (Hauptthread).
-    var onUpdate: (() -> Void)?
-    /// Gast-Auflösung geändert (Hauptthread).
-    var onResize: ((Int, Int) -> Void)?
-    /// Verbindung beendet (Hauptthread).
-    var onDisconnect: ((Error?) -> Void)?
+    /// Neues Bild verfügbar.
+    @MainActor var onUpdate: (() -> Void)?
+    /// Gast-Auflösung geändert.
+    @MainActor var onResize: ((Int, Int) -> Void)?
+    /// Verbindung beendet.
+    @MainActor var onDisconnect: ((Error?) -> Void)?
 
     deinit {
         close()
@@ -56,7 +62,7 @@ final class RFBConnection {
         lock.lock()
         resizeLocked(width: info.width, height: info.height)
         lock.unlock()
-        running = true
+        running.store(true, ordering: .releasing)
         let thread = Thread { [weak self] in
             self?.readLoop()
         }
@@ -100,7 +106,7 @@ final class RFBConnection {
     }
 
     func close() {
-        running = false
+        running.store(false, ordering: .releasing)
         stream?.socket.close()
     }
 
@@ -112,7 +118,7 @@ final class RFBConnection {
         do {
             let size = currentSize()
             try client.requestUpdate(incremental: false, width: size.width, height: size.height)
-            while running {
+            while running.load(ordering: .acquiring) {
                 let message = try client.readMessage()
                 switch message {
                 case .framebufferUpdate(let rects):
@@ -141,7 +147,7 @@ final class RFBConnection {
                     let h = height
                     lock.unlock()
                     if resized {
-                        DispatchQueue.main.async { [weak self] in self?.onResize?(w, h) }
+                        MainQueue.async { [weak self] in self?.onResize?(w, h) }
                     }
                     scheduleUpdate()
                     try client.requestUpdate(incremental: !resized, width: w, height: h)
@@ -149,7 +155,7 @@ final class RFBConnection {
                     // Isolation: Zwischenablage-Inhalte des Gasts werden verworfen.
                     break
                 case .bell:
-                    DispatchQueue.main.async { NSSound.beep() }
+                    MainQueue.async { NSSound.beep() }
                 case .colorMapEntries:
                     break
                 }
@@ -157,8 +163,9 @@ final class RFBConnection {
         } catch {
             failure = error
         }
-        running = false
-        DispatchQueue.main.async { [weak self] in self?.onDisconnect?(failure) }
+        running.store(false, ordering: .releasing)
+        let reason = failure
+        MainQueue.async { [weak self] in self?.onDisconnect?(reason) }
     }
 
     /// Fasst viele Bildänderungen zu einer Aktualisierung auf dem Hauptthread zusammen.
@@ -168,7 +175,7 @@ final class RFBConnection {
         updateScheduled = true
         lock.unlock()
         if alreadyScheduled { return }
-        DispatchQueue.main.async { [weak self] in
+        MainQueue.async { [weak self] in
             guard let self else { return }
             self.lock.lock()
             self.updateScheduled = false

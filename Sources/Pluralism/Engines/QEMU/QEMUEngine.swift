@@ -11,6 +11,7 @@ import PluralismNet
 /// Netzwerk: Pluralism legt ein eigenes vmnet-Netz für die VM an und reicht die Ethernet-Rahmen
 /// zwischen QEMU (-netdev dgram) und vmnet durch. Klappt das nicht, nutzt QEMU sein eingebautes
 /// Usermode-Netz als Ausweichweg.
+@MainActor
 final class QEMUEngine: VMEngine {
     let bundle: VMBundle
     private(set) var config: VMConfiguration
@@ -35,7 +36,8 @@ final class QEMUEngine: VMEngine {
     private(set) var activeNetwork: ActiveNetwork = .none
     private var runtime: RuntimePaths
     private var launchGeneration = 0
-    private var cancelled = false
+    /// Abbruch für den laufenden Start; Hintergrundschritte lesen ihn beim Warten auf Sockets.
+    private var launchFlag = CancellationFlag()
     private var usesIntegratedDisplay = true
     private var stopRequestedByUser = false
 
@@ -53,6 +55,32 @@ final class QEMUEngine: VMEngine {
 
     // MARK: Start
 
+    /// Alles, was ein Start braucht. Unveränderlich und `Sendable`, damit es in die Hintergrundschritte darf.
+    private struct Launch: Sendable {
+        let generation: Int
+        let flag: CancellationFlag
+        let config: VMConfiguration
+        let bundle: VMBundle
+        let runtime: RuntimePaths
+        let toolchain: QEMUToolchain
+        let media: QEMUMedia
+    }
+
+    private struct Prepared: Sendable {
+        let network: NetworkSetup
+        let plan: QEMULaunchPlan
+    }
+
+    private struct Processes: Sendable {
+        let qemu: ManagedProcess
+        let tpm: ManagedProcess?
+    }
+
+    private struct Connections: Sendable {
+        let qmp: QMPClient
+        let rfb: RFBConnection?
+    }
+
     func start() {
         guard qemuProcess == nil, !state.isActive else { return }
         guard let toolchain = toolchainProvider() else {
@@ -60,116 +88,141 @@ final class QEMUEngine: VMEngine {
             return
         }
         state = .starting
-        cancelled = false
         stopRequestedByUser = false
         launchGeneration += 1
-        let generation = launchGeneration
-        let config = self.config
-        let bundle = self.bundle
-        let runtime = self.runtime
-        let media = makeMedia(config: config, bundle: bundle)
-
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            var startedRelay: PacketRelay?
-            do {
-                try QEMUEngine.prepare(config: config, bundle: bundle, toolchain: toolchain, runtime: runtime)
-                let network = QEMUEngine.setupNetwork(config: config, runtime: runtime) { address in
-                    DispatchQueue.main.async {
-                        self?.guestAddressDetected(address, generation: generation)
-                    }
-                }
-                startedRelay = network.relay
-                let plan = try QEMUCommandBuilder.makePlan(config: config, bundle: bundle, toolchain: toolchain,
-                                                           runtime: runtime, media: media, network: network.backend)
-                DispatchQueue.main.async {
-                    guard let self, self.launchGeneration == generation else { return }
-                    self.relay = network.relay
-                    self.activeNetwork = network.active
-                    if let notice = network.notice {
-                        self.onNotice?(notice)
-                    }
-                }
-                // swtpm zuerst, QEMU verbindet sich beim Start mit dessen Socket.
-                var tpm: ManagedProcess?
-                if let tpmPlan = plan.swtpm {
-                    let process = try ManagedProcess(plan: tpmPlan, logURL: bundle.tpmLogURL)
-                    try process.launch()
-                    tpm = process
-                    try QEMUEngine.waitForFile(runtime.tpmSocket.path, timeout: 5)
-                }
-                let qemu = try ManagedProcess(plan: plan.qemu, logURL: bundle.engineLogURL)
-                try qemu.launch()
-
-                DispatchQueue.main.async {
-                    guard let self, self.launchGeneration == generation else {
-                        qemu.terminate()
-                        tpm?.terminate()
-                        return
-                    }
-                    self.qemuProcess = qemu
-                    self.tpmProcess = tpm
-                    self.usesIntegratedDisplay = plan.usesIntegratedDisplay
-                    qemu.onExit = { [weak self] status in
-                        self?.processDidExit(status: status, generation: generation)
-                    }
-                    if !qemu.isRunning {
-                        self.processDidExit(status: -1, generation: generation)
-                    }
-                }
-
-                // Steuerverbindung
-                let qmp = QMPClient()
-                try qmp.connect(path: runtime.qmpSocket.path, timeout: 20) { [weak self] in
-                    self?.isLaunchCancelled(generation) ?? true
-                }
-
-                // Bildschirm
-                var rfb: RFBConnection?
-                if plan.usesIntegratedDisplay {
-                    let connection = RFBConnection()
-                    try connection.connect(path: runtime.vncSocket.path, timeout: 20) { [weak self] in
-                        self?.isLaunchCancelled(generation) ?? true
-                    }
-                    rfb = connection
-                }
-
-                DispatchQueue.main.async {
-                    guard let self, self.launchGeneration == generation, self.qemuProcess != nil else {
-                        qmp.close()
-                        rfb?.close()
-                        return
-                    }
-                    self.attach(qmp: qmp, rfb: rfb)
-                    self.state = .running
-                }
-            } catch {
-                DispatchQueue.main.async {
-                    // Wenn der QEMU-Prozess schon beendet ist, hat processDidExit den Fehler gemeldet.
-                    guard let self, self.launchGeneration == generation, self.state == .starting else {
-                        if let startedRelay {
-                            DispatchQueue.global().async { startedRelay.stop() }
-                        }
-                        return
-                    }
-                    let logHint = QEMUEngine.lastLogLines(self.bundle.engineLogURL)
-                    self.teardown()
-                    var message = error.localizedDescription
-                    if !logHint.isEmpty {
-                        message += "\n\nQEMU meldet:\n" + logHint
-                    }
-                    self.state = .error(message)
-                }
-            }
+        let flag = CancellationFlag()
+        launchFlag = flag
+        let launch = Launch(generation: launchGeneration, flag: flag, config: config, bundle: bundle,
+                            runtime: runtime, toolchain: toolchain, media: makeMedia(config: config, bundle: bundle))
+        Task {
+            await run(launch)
         }
     }
 
-    private func isLaunchCancelled(_ generation: Int) -> Bool {
-        // Wird aus einem Hintergrundthread gelesen; ein veralteter Wert verzögert höchstens kurz.
-        cancelled || launchGeneration != generation
+    /// Gilt dieser Start noch? (Nicht abgebrochen, kein neuerer Start.)
+    private func isCurrent(_ launch: Launch) -> Bool {
+        launchGeneration == launch.generation && !launch.flag.isCancelled
+    }
+
+    /// Startablauf in drei blockierenden Schritten im Hintergrund: vorbereiten und Netz aufbauen,
+    /// Prozesse starten, Steuerung und Bild verbinden. Dazwischen prüft der Main Actor, ob der Start
+    /// noch gilt, und übernimmt die Ergebnisse.
+    private func run(_ launch: Launch) async {
+        var startedRelay: PacketRelay?
+        let generation = launch.generation
+        let addressDetected: @MainActor @Sendable (String) -> Void = { [weak self] address in
+            self?.guestAddressDetected(address, generation: generation)
+        }
+        do {
+            // 1. Ordner, Platten, Firmware, Netz, Befehlszeile
+            let prepared = try await Background.runThrowing {
+                try QEMUEngine.prepare(config: launch.config, bundle: launch.bundle, toolchain: launch.toolchain,
+                                       runtime: launch.runtime)
+                let network = QEMUEngine.setupNetwork(config: launch.config, runtime: launch.runtime) { address in
+                    MainQueue.async { addressDetected(address) }
+                }
+                do {
+                    let plan = try QEMUCommandBuilder.makePlan(config: launch.config, bundle: launch.bundle,
+                                                               toolchain: launch.toolchain, runtime: launch.runtime,
+                                                               media: launch.media, network: network.backend)
+                    return Prepared(network: network, plan: plan)
+                } catch {
+                    network.relay?.stop()
+                    throw error
+                }
+            }
+            startedRelay = prepared.network.relay
+            guard isCurrent(launch) else {
+                if let startedRelay {
+                    QEMUEngine.stopInBackground(startedRelay)
+                }
+                return
+            }
+            relay = prepared.network.relay
+            activeNetwork = prepared.network.active
+            if let notice = prepared.network.notice {
+                onNotice?(notice)
+            }
+
+            // 2. swtpm zuerst, QEMU verbindet sich beim Start mit dessen Socket.
+            let plan = prepared.plan
+            let processes = try await Background.runThrowing {
+                var tpm: ManagedProcess?
+                do {
+                    if let tpmPlan = plan.swtpm {
+                        let process = try ManagedProcess(plan: tpmPlan, logURL: launch.bundle.tpmLogURL)
+                        try process.launch()
+                        tpm = process
+                        try QEMUEngine.waitForFile(launch.runtime.tpmSocket.path, timeout: 5)
+                    }
+                    let qemu = try ManagedProcess(plan: plan.qemu, logURL: launch.bundle.engineLogURL)
+                    try qemu.launch()
+                    return Processes(qemu: qemu, tpm: tpm)
+                } catch {
+                    tpm?.terminate()
+                    throw error
+                }
+            }
+            guard isCurrent(launch) else {
+                processes.qemu.terminate()
+                processes.tpm?.terminate()
+                return
+            }
+            qemuProcess = processes.qemu
+            tpmProcess = processes.tpm
+            usesIntegratedDisplay = plan.usesIntegratedDisplay
+            processes.qemu.onExit = { [weak self] status in
+                self?.processDidExit(status: status, generation: generation)
+            }
+            if !processes.qemu.isRunning {
+                processDidExit(status: -1, generation: generation)
+                return
+            }
+
+            // 3. Steuerverbindung (QMP) und Bildschirm (VNC)
+            let connections = try await Background.runThrowing {
+                let qmp = QMPClient()
+                try qmp.connect(path: launch.runtime.qmpSocket.path, timeout: 20) { launch.flag.isCancelled }
+                var rfb: RFBConnection?
+                if plan.usesIntegratedDisplay {
+                    let connection = RFBConnection()
+                    do {
+                        try connection.connect(path: launch.runtime.vncSocket.path, timeout: 20) { launch.flag.isCancelled }
+                    } catch {
+                        qmp.close()
+                        throw error
+                    }
+                    rfb = connection
+                }
+                return Connections(qmp: qmp, rfb: rfb)
+            }
+            guard isCurrent(launch), qemuProcess != nil else {
+                connections.qmp.close()
+                connections.rfb?.close()
+                return
+            }
+            attach(qmp: connections.qmp, rfb: connections.rfb)
+            state = .running
+        } catch {
+            // Wenn der QEMU-Prozess schon beendet ist, hat processDidExit den Fehler gemeldet.
+            guard launchGeneration == generation, state == .starting else {
+                if let startedRelay {
+                    QEMUEngine.stopInBackground(startedRelay)
+                }
+                return
+            }
+            let logHint = QEMUEngine.lastLogLines(bundle.engineLogURL)
+            teardown()
+            var message = error.localizedDescription
+            if !logHint.isEmpty {
+                message += "\n\nQEMU meldet:\n" + logHint
+            }
+            state = .error(message)
+        }
     }
 
     /// Bereitet Ordner, Sockets, Hilfsplatte und UEFI-Variablen vor (Hintergrundthread).
-    private static func prepare(config: VMConfiguration, bundle: VMBundle, toolchain: QEMUToolchain,
+    private nonisolated static func prepare(config: VMConfiguration, bundle: VMBundle, toolchain: QEMUToolchain,
                                 runtime: RuntimePaths) throws {
         let fm = FileManager.default
         try fm.createDirectory(at: bundle.logsDirectory, withIntermediateDirectories: true)
@@ -205,7 +258,7 @@ final class QEMUEngine: VMEngine {
         }
     }
 
-    struct NetworkSetup {
+    struct NetworkSetup: Sendable {
         var backend: QEMUNetworkBackend
         var relay: PacketRelay?
         var active: ActiveNetwork
@@ -221,8 +274,8 @@ final class QEMUEngine: VMEngine {
     }
 
     /// Baut das vmnet-Netz und die Paketbrücke auf. Fällt bei Problemen auf das Usermode-Netz zurück.
-    private static func setupNetwork(config: VMConfiguration, runtime: RuntimePaths,
-                                     onGuestAddress: @escaping (String) -> Void) -> NetworkSetup {
+    private nonisolated static func setupNetwork(config: VMConfiguration, runtime: RuntimePaths,
+                                                 onGuestAddress: @escaping @Sendable (String) -> Void) -> NetworkSetup {
         let fallbackForwards = QEMUCommandBuilder.allPortForwards(config)
         switch config.network.mode {
         case .none:
@@ -313,7 +366,7 @@ final class QEMUEngine: VMEngine {
     }
 
     private func teardown() {
-        cancelled = true
+        launchFlag.cancel()
         qmp?.close()
         qmp = nil
         rfb?.close()
@@ -325,7 +378,7 @@ final class QEMUEngine: VMEngine {
         tpmProcess = nil
         if let relay {
             self.relay = nil
-            DispatchQueue.global(qos: .utility).async { relay.stop() }
+            QEMUEngine.stopInBackground(relay)
         }
         activeNetwork = .none
     }
@@ -358,7 +411,8 @@ final class QEMUEngine: VMEngine {
         }
         // Falls QEMU nicht reagiert: nach 5 Sekunden hart beenden.
         let process = qemuProcess
-        DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
+        Task {
+            try? await Task.sleep(for: .seconds(5))
             if process.isRunning {
                 process.kill()
             }
@@ -385,7 +439,7 @@ final class QEMUEngine: VMEngine {
 
     var supportsHotPlug: Bool { false }
 
-    func hotPlugImage(_ url: URL, completion: @escaping (Error?) -> Void) {
+    func hotPlugImage(_ url: URL, completion: @escaping @MainActor (Error?) -> Void) {
         completion(PluralismError.message("Bei QEMU-VMs werden Medien beim nächsten Start angehängt."))
     }
 
@@ -415,7 +469,12 @@ final class QEMUEngine: VMEngine {
 
     // MARK: Hilfen
 
-    private static func waitForFile(_ path: String, timeout: TimeInterval) throws {
+    /// Brücke anhalten, ohne den Main Actor zu blockieren (vmnet wartet bis zu drei Sekunden).
+    private nonisolated static func stopInBackground(_ relay: PacketRelay) {
+        DispatchQueue.global(qos: .utility).async { relay.stop() }
+    }
+
+    private nonisolated static func waitForFile(_ path: String, timeout: TimeInterval) throws {
         let deadline = Date().addingTimeInterval(timeout)
         while !FileManager.default.fileExists(atPath: path) {
             if Date() > deadline {
@@ -426,7 +485,7 @@ final class QEMUEngine: VMEngine {
     }
 
     /// Letzte Zeilen der QEMU-Logdatei, für verständlichere Fehlermeldungen.
-    static func lastLogLines(_ url: URL, count: Int = 6) -> String {
+    nonisolated static func lastLogLines(_ url: URL, count: Int = 6) -> String {
         guard let text = try? String(contentsOf: url, encoding: .utf8) else { return "" }
         let lines = text.split(separator: "\n").suffix(count)
         return lines.joined(separator: "\n")

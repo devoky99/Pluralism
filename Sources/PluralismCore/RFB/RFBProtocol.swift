@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 // RFB ("Remote Framebuffer", das Protokoll hinter VNC), Version 3.8.
 // Pluralism verbindet sich damit über einen lokalen Unix-Socket mit dem VNC-Server, den
@@ -15,7 +16,7 @@ public protocol RFBByteSink: AnyObject {
     func write(_ bytes: [UInt8]) throws
 }
 
-public enum RFBError: Error, LocalizedError, Equatable {
+public enum RFBError: Error, LocalizedError, Equatable, Sendable {
     case badProtocolVersion(String)
     case connectionRefused(String)
     case noSupportedSecurityType([UInt8])
@@ -91,7 +92,7 @@ public struct RFBServerInit: Equatable, Sendable {
     public var name: String
 }
 
-public enum RFBRectContent: Equatable {
+public enum RFBRectContent: Equatable, Sendable {
     case raw([UInt8])
     case copyRect(sourceX: Int, sourceY: Int)
     /// Neue Bildschirmgröße steht in width/height des Rechtecks.
@@ -100,7 +101,7 @@ public enum RFBRectContent: Equatable {
     case qemuExtendedKeySupport
 }
 
-public struct RFBRect: Equatable {
+public struct RFBRect: Equatable, Sendable {
     public var x: Int
     public var y: Int
     public var width: Int
@@ -108,7 +109,7 @@ public struct RFBRect: Equatable {
     public var content: RFBRectContent
 }
 
-public enum RFBServerMessage: Equatable {
+public enum RFBServerMessage: Equatable, Sendable {
     case framebufferUpdate([RFBRect])
     case colorMapEntries
     case bell
@@ -116,12 +117,22 @@ public enum RFBServerMessage: Equatable {
 }
 
 /// Client-Seite des RFB-Protokolls ohne Netzwerkcode.
-public final class RFBClientProtocol {
+///
+/// Nebenläufigkeit: `handshake()` läuft, bevor das Objekt geteilt wird. Danach liest genau ein
+/// Thread (`readMessage`), andere schreiben (Tasten, Maus, Bildanforderungen). Die Senke muss
+/// gleichzeitige Schreibvorgänge serialisieren. Der einzige danach noch veränderte Zustand ist
+/// `supportsQEMUExtendedKeys`, und der ist atomar.
+public final class RFBClientProtocol: @unchecked Sendable {
     public let source: RFBByteSource
     public let sink: RFBByteSink
     public let pixelFormat: RFBPixelFormat
     public private(set) var serverInit: RFBServerInit?
-    public private(set) var supportsQEMUExtendedKeys = false
+    private let extendedKeys = Atomic<Bool>(false)
+
+    /// Server versteht QEMUs erweiterte Tastenereignisse (PC-Scancodes).
+    public var supportsQEMUExtendedKeys: Bool {
+        extendedKeys.load(ordering: .relaxed)
+    }
 
     /// Kodierungen, die Pluralism versteht. Raw reicht lokal völlig aus (Unix-Socket, kein Netz).
     public static let preferredEncodings: [Int32] = [
@@ -225,7 +236,7 @@ public final class RFBClientProtocol {
                 case RFBEncoding.desktopSize:
                     rects.append(RFBRect(x: x, y: y, width: w, height: h, content: .desktopSize))
                 case RFBEncoding.qemuExtendedKeyEvent:
-                    supportsQEMUExtendedKeys = true
+                    extendedKeys.store(true, ordering: .relaxed)
                     rects.append(RFBRect(x: x, y: y, width: w, height: h, content: .qemuExtendedKeySupport))
                 case RFBEncoding.lastRect:
                     return .framebufferUpdate(rects)

@@ -4,6 +4,7 @@ import PluralismCore
 
 /// Verbindet eine VM-Konfiguration mit ihrer Engine und stellt den Zustand für die
 /// Oberfläche bereit. Eine Sitzung existiert pro VM, solange die App läuft.
+@MainActor
 final class VMSession: ObservableObject, Identifiable {
     let id: UUID
     let bundle: VMBundle

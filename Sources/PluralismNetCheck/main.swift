@@ -60,9 +60,11 @@ func parseOptions() -> Options {
     return options
 }
 
+// Code auf oberster Ebene gehört in Swift 6 dem Main Actor, ebenso diese Hilfsfunktionen.
 let directory = "/tmp/pluralism-netcheck-\(getpid())"
 var cleanupPaths: [String] = []
 
+@MainActor
 func cleanup() {
     for path in cleanupPaths {
         unlink(path)
@@ -70,6 +72,7 @@ func cleanup() {
     rmdir(directory)
 }
 
+@MainActor
 func emit(_ fields: [String: Any], exitCode: Int32) -> Never {
     cleanup()
     var output = fields
@@ -88,6 +91,7 @@ func log(_ text: String) {
 
 /// Ein Durchlauf: Netz anlegen, Brücke starten, DHCP-Angebot holen, alles wieder freigeben.
 /// Liefert die Felder und den Exit-Code (0 = Erfolg).
+@MainActor
 func runOnce(options: Options, mode: VMNetworkMode, tag: String) -> ([String: Any], Int32) {
     let mac = options.app ? appMAC : MACAddress.random()
     let macBytes = MACAddress.bytes(mac)!
@@ -118,10 +122,7 @@ func runOnce(options: Options, mode: VMNetworkMode, tag: String) -> ([String: An
         fields["notice"] = notice
     }
 
-    var seenAddress: String?
-
     let relay = PacketRelay(network: network, hostSocketPath: hostSocket, guestSocketPath: guestSocket)
-    relay.onGuestAddress = { seenAddress = $0 }
     do {
         try relay.start()
     } catch {
@@ -172,7 +173,7 @@ func runOnce(options: Options, mode: VMNetworkMode, tag: String) -> ([String: An
         let arp: [UInt8] = [0, 1, 8, 0, 6, 4, 0, 1] + macBytes + yours + [0, 0, 0, 0, 0, 0] + yours
         UnixDatagram.send(guestFD, [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF] + macBytes + [0x08, 0x06] + arp, to: hostAddress)
         Thread.sleep(forTimeInterval: 0.3)
-        fields["detected"] = relay.guestIPv4 ?? seenAddress ?? "-"
+        fields["detected"] = relay.guestIPv4 ?? "-"
     }
     let matches = addressing?.guestAddress == nil || offer.yourAddress == addressing?.guestAddress
     fields["step"] = "done"
