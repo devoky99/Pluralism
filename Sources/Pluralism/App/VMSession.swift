@@ -48,6 +48,9 @@ final class VMSession: ObservableObject, Identifiable {
         engine.onNotice = { [weak self] message in
             self?.notice = message
         }
+        engine.onNetworkChange = { [weak self] in
+            self?.objectWillChange.send()
+        }
         state = engine.state
     }
 

@@ -27,12 +27,17 @@ public final class PacketRelay {
     /// Nur für Prüfprogramme gedacht; normalerweise gehen die Rahmen direkt an QEMU.
     public var frameObserver: (([UInt8]) -> Void)?
 
+    /// Wird (auf einer internen Queue) aufgerufen, sobald der Gast eine neue IPv4-Adresse benutzt.
+    public var onGuestAddress: ((String) -> Void)?
+
     private let queue = DispatchQueue(label: "pluralism.net.relay", qos: .userInteractive)
     private var interface: interface_ref?
     private var fd: Int32 = -1
     private var readSource: DispatchSourceRead?
     private var guestAddress = sockaddr_un()
     private var stats = Statistics()
+    private var watcher: GuestAddressWatcher?
+    private var learnedAddress: String?
 
     private let batchSize = 64
     private var readPackets: UnsafeMutablePointer<vmpktdesc>?
@@ -46,6 +51,18 @@ public final class PacketRelay {
         self.network = network
         self.hostSocketPath = hostSocketPath
         self.guestSocketPath = guestSocketPath
+        if let addressing = network.addressing, let subnet = VMNetwork.bytes(addressing.subnet) {
+            let prefix = addressing.prefixLength
+            let maskValue: UInt32 = prefix == 0 ? 0 : UInt32.max << (32 - UInt32(prefix))
+            let mask = [UInt8(maskValue >> 24), UInt8((maskValue >> 16) & 0xFF),
+                        UInt8((maskValue >> 8) & 0xFF), UInt8(maskValue & 0xFF)]
+            watcher = GuestAddressWatcher(network: subnet, mask: mask)
+        }
+    }
+
+    /// Adresse, die der Gast zuletzt benutzt hat (aus seinen eigenen Rahmen).
+    public var guestIPv4: String? {
+        queue.sync { learnedAddress }
     }
 
     deinit {
@@ -211,6 +228,11 @@ public final class PacketRelay {
                 guard let buffer = iovecs[received].iov_base else { break }
                 let length = recv(fd, buffer, maxPacketSize, MSG_DONTWAIT)
                 if length <= 0 { break }
+                if watcher != nil,
+                   let address = watcher?.observe(UnsafeRawBufferPointer(start: buffer, count: length)) {
+                    learnedAddress = address
+                    onGuestAddress?(address)
+                }
                 iovecs[received].iov_len = length
                 packets[received].vm_pkt_size = length
                 packets[received].vm_pkt_iov = iovecs + received

@@ -18,6 +18,7 @@ final class QEMUEngine: VMEngine {
 
     var onStateChange: ((VMRunState) -> Void)?
     var onNotice: ((String) -> Void)?
+    var onNetworkChange: (() -> Void)?
 
     private(set) var state: VMRunState = .stopped {
         didSet {
@@ -72,7 +73,11 @@ final class QEMUEngine: VMEngine {
             var startedRelay: PacketRelay?
             do {
                 try QEMUEngine.prepare(config: config, bundle: bundle, toolchain: toolchain, runtime: runtime)
-                let network = QEMUEngine.setupNetwork(config: config, runtime: runtime)
+                let network = QEMUEngine.setupNetwork(config: config, runtime: runtime) { address in
+                    DispatchQueue.main.async {
+                        self?.guestAddressDetected(address, generation: generation)
+                    }
+                }
                 startedRelay = network.relay
                 let plan = try QEMUCommandBuilder.makePlan(config: config, bundle: bundle, toolchain: toolchain,
                                                            runtime: runtime, media: media, network: network.backend)
@@ -207,8 +212,17 @@ final class QEMUEngine: VMEngine {
         var notice: String?
     }
 
+    /// Die Paketbrücke hat die Adresse gesehen, die der Gast benutzt.
+    private func guestAddressDetected(_ address: String, generation: Int) {
+        guard launchGeneration == generation, case .vmnet(var addressing) = activeNetwork, addressing != nil else { return }
+        addressing?.guestAddress = address
+        activeNetwork = .vmnet(addressing)
+        onNetworkChange?()
+    }
+
     /// Baut das vmnet-Netz und die Paketbrücke auf. Fällt bei Problemen auf das Usermode-Netz zurück.
-    private static func setupNetwork(config: VMConfiguration, runtime: RuntimePaths) -> NetworkSetup {
+    private static func setupNetwork(config: VMConfiguration, runtime: RuntimePaths,
+                                     onGuestAddress: @escaping (String) -> Void) -> NetworkSetup {
         let fallbackForwards = QEMUCommandBuilder.allPortForwards(config)
         switch config.network.mode {
         case .none:
@@ -220,6 +234,7 @@ final class QEMUEngine: VMEngine {
                 let relay = PacketRelay(network: network,
                                         hostSocketPath: runtime.netHostSocket.path,
                                         guestSocketPath: runtime.netGuestSocket.path)
+                relay.onGuestAddress = onGuestAddress
                 try relay.start()
                 return NetworkSetup(backend: .vmnetRelay(guestSocket: runtime.netGuestSocket.path,
                                                          hostSocket: runtime.netHostSocket.path),

@@ -267,13 +267,12 @@ public enum NetworkMode: String, Codable, CaseIterable, Identifiable, Sendable {
 }
 
 /// Adressen des Netzes einer laufenden VM, so wie vmnet es angelegt hat.
-/// vmnet wählt den Adressbereich selbst (z. B. 192.168.64.0/24). Der Mac ist die erste
-/// nutzbare Adresse (.1), der Gast bekommt per DHCP-Reservierung die zweite (.2).
+/// Der Mac ist die erste nutzbare Adresse (.1), der Gast meist die zweite (.2).
 public struct GuestNetworkAddressing: Codable, Equatable, Sendable {
     public var subnet: String
     public var prefixLength: Int
     public var hostAddress: String
-    /// Feste Adresse des Gasts, nil wenn sie nicht reserviert werden konnte (dann per DHCP).
+    /// Adresse des Gasts: reserviert oder an seinen Rahmen erkannt, sonst nil.
     public var guestAddress: String?
 
     public init(subnet: String, prefixLength: Int, hostAddress: String, guestAddress: String?) {

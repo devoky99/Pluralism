@@ -67,7 +67,9 @@ public final class VMNetwork {
     public let addressing: GuestNetworkAddressing?
 
     /// - Parameters:
-    ///   - subnet: eigener Bereich (Adresse, wie sie an vmnet geht, Maske /24), sonst wählt vmnet
+    ///   - subnet: eigener Bereich /24, angegeben als Adresse des Macs darin (z. B. 192.168.101.1).
+    ///     Mit der Netzadresse (.0) legt vmnet das Netz an, startet die Schnittstelle aber nicht.
+    ///     Ohne Angabe wählt vmnet den Bereich selbst.
     ///   - reserveAddress: bei eigenem Bereich die .2 für die MAC des Gasts reservieren
     public init(mode: VMNetworkMode, guestMAC: String, subnet: String? = nil, reserveAddress: Bool = true) throws {
         guard let macBytes = MACAddress.bytes(guestMAC) else {

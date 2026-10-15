@@ -78,4 +78,42 @@ final class NetworkTests: XCTestCase {
         let bytes: [UInt8] = [0x00, 0x01, 0xF2, 0x03, 0xF4, 0xF5, 0xF6, 0xF7]
         XCTAssertEqual(DHCPProbe.checksum(bytes), ~UInt16(0xDDF2))
     }
+
+    // MARK: Adresse des Gasts erkennen
+
+    func ipv4Frame(source: [UInt8]) -> [UInt8] {
+        var ip: [UInt8] = [0x45, 0, 0, 20, 0, 0, 0, 0, 64, 6, 0, 0]
+        ip += source + [192, 168, 64, 1]
+        return [0x02, 0, 0, 0, 0, 1] + mac + [0x08, 0x00] + ip
+    }
+
+    func arpFrame(sender: [UInt8]) -> [UInt8] {
+        let arp: [UInt8] = [0, 1, 8, 0, 6, 4, 0, 1] + mac + sender + [0, 0, 0, 0, 0, 0] + [192, 168, 64, 1]
+        return [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF] + mac + [0x08, 0x06] + arp
+    }
+
+    func testGuestAddressWatcher() {
+        var watcher = GuestAddressWatcher(network: [192, 168, 65, 0], mask: [255, 255, 255, 0])
+        func observe(_ frame: [UInt8]) -> String? {
+            frame.withUnsafeBytes { watcher.observe($0) }
+        }
+        // DHCP-Discover hat Absender 0.0.0.0, zählt nicht
+        XCTAssertNil(observe(DHCPProbe.discoverFrame(mac: mac, transactionID: 1)))
+        // Link-local vor dem DHCP und fremde Bereiche zählen nicht
+        XCTAssertNil(observe(ipv4Frame(source: [169, 254, 3, 4])))
+        XCTAssertNil(observe(ipv4Frame(source: [192, 168, 64, 2])))
+        // Erste echte Adresse wird gemeldet, danach nur Änderungen
+        XCTAssertEqual(observe(arpFrame(sender: [192, 168, 65, 2])), "192.168.65.2")
+        XCTAssertNil(observe(ipv4Frame(source: [192, 168, 65, 2])))
+        XCTAssertEqual(observe(ipv4Frame(source: [192, 168, 65, 7])), "192.168.65.7")
+        // Netz- und Broadcast-Adresse nicht
+        XCTAssertNil(observe(ipv4Frame(source: [192, 168, 65, 255])))
+        XCTAssertNil(observe(ipv4Frame(source: [192, 168, 65, 0])))
+        // zu kurz oder IPv6
+        XCTAssertNil(observe([0x08, 0x00]))
+        var v6 = ipv4Frame(source: [192, 168, 65, 9])
+        v6[12] = 0x86
+        v6[13] = 0xDD
+        XCTAssertNil(observe(v6))
+    }
 }

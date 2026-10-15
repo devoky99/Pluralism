@@ -144,16 +144,18 @@ jobs:
             codesign -d --entitlements - "$BIN" 2>/dev/null | grep -o "com.apple.security.[a-z.-]*" | tr '\n' ' '; echo
             run() { echo "## $1"; shift; "$BIN" "$@" || echo "exit=$?"; }
             run "A Internet und Mac"
-            run "B Nur Mac"                               --host-only
-            run "C zwei andere VMs laufen"                --others 2
-            run "D dreimal starten"                       --cycles 3
-            run "E dreimal starten, 3 s Pause"            --cycles 3 --pause 3
-            run "F eigener Bereich 192.168.96.0"          --subnet 192.168.96.0
-            run "G eigener Bereich 192.168.96.1"          --subnet 192.168.96.1
-            run "H eigener Bereich 192.168.64.0"          --subnet 192.168.64.0
-            run "I eigener Bereich ohne Reservierung"     --subnet 192.168.96.0 --no-reservation
-            run "J Nur Mac, eigener Bereich"              --host-only --subnet 192.168.160.0
-            run "K eigener Bereich dreimal"               --subnet 192.168.97.0 --cycles 3
+            run "B Nur Mac"                                  --host-only
+            run "C zwei andere VMs laufen"                   --others 2
+            run "D dreimal starten"                          --cycles 3
+            run "F eigener Bereich, Netzadresse .0"          --subnet 192.168.96.0
+            run "G eigener Bereich, Mac-Adresse .1"          --subnet 192.168.96.1
+            run "M eigener Bereich dreimal"                  --subnet 192.168.98.1 --cycles 3 --pause 1
+            run "N eigener Bereich, Prozess 1"               --subnet 192.168.99.1
+            run "O eigener Bereich, Prozess 2 gleich danach" --subnet 192.168.99.1
+            run "P Nur Mac, eigener Bereich"                 --host-only --subnet 192.168.160.1
+            run "Q eigener Bereich, zwei andere VMs laufen"  --subnet 192.168.98.1 --others 2
+            run "R eigener Bereich ohne Reservierung"        --subnet 192.168.99.1 --no-reservation
+            run "S eigener Bereich 10.37.0.1"                --subnet 10.37.0.1
             BIN="$PLAIN"; run "L ohne Entitlement"
           } 2>&1 | tee "$RUNNER_TEMP/logs/25-netcheck.log"
       - name: App-Bundle bauen und signieren

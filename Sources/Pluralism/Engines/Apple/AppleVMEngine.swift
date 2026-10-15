@@ -13,6 +13,7 @@ final class AppleVMEngine: NSObject, VMEngine, VZVirtualMachineDelegate {
 
     var onStateChange: ((VMRunState) -> Void)?
     var onNotice: ((String) -> Void)?
+    var onNetworkChange: (() -> Void)?
 
     private(set) var state: VMRunState = .stopped {
         didSet {

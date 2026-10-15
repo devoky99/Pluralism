@@ -79,6 +79,8 @@ protocol VMEngine: AnyObject {
     var onStateChange: ((VMRunState) -> Void)? { get set }
     /// Hinweise für die Oberfläche (z. B. "Gesicherter Zustand war ungültig").
     var onNotice: ((String) -> Void)? { get set }
+    /// `activeNetwork` hat sich geändert (z. B. Adresse des Gasts erkannt). Hauptthread.
+    var onNetworkChange: (() -> Void)? { get set }
 
     func start()
     /// Gast sauber herunterfahren (ACPI bzw. requestStop).
