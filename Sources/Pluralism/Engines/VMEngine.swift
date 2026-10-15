@@ -45,21 +45,26 @@ enum VMRunState: Equatable {
 /// Welches Netz eine laufende VM tatsächlich nutzt.
 enum ActiveNetwork: Equatable {
     case none
-    /// Eigenes vmnet-Netz, Gast unter fester Adresse vom Mac erreichbar.
-    case vmnet(GuestNetworkAddressing)
+    /// Eigenes vmnet-Netz. Adressbereich wählt vmnet, der Gast bekommt per Reservierung meist die .2.
+    case vmnet(GuestNetworkAddressing?)
     /// Ausweichweg: QEMU-Usermode-Netz bzw. Apples einfaches NAT.
     case fallback
 
     var description: String {
         switch self {
         case .none: return "kein Netzwerk"
-        case .vmnet(let addressing): return "vmnet, Adresse \(addressing.guestAddress)"
+        case .vmnet(let addressing):
+            guard let addressing else { return "vmnet" }
+            if let guest = addressing.guestAddress {
+                return "vmnet, Adresse \(guest)"
+            }
+            return "vmnet, Adresse per DHCP aus \(addressing.description)"
         case .fallback: return "Ausweich-Netz"
         }
     }
 
     var guestAddress: String? {
-        if case .vmnet(let addressing) = self { return addressing.guestAddress }
+        if case .vmnet(let addressing) = self { return addressing?.guestAddress }
         return nil
     }
 }

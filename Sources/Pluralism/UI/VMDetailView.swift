@@ -193,12 +193,15 @@ struct VMDetailView: View {
     private var networkDescription: String {
         guard config.network.mode != .none else { return config.network.mode.displayName }
         var text = config.network.mode.displayName
-        if let addressing = config.network.addressing {
-            text += ", Adresse \(addressing.guestAddress)"
-        }
         if session.state.isActive {
             switch session.engine.activeNetwork {
-            case .vmnet: text += " (schnelles Netz)"
+            case .vmnet(let addressing):
+                if let guest = addressing?.guestAddress {
+                    text += ", Adresse \(guest)"
+                } else if let addressing {
+                    text += ", Adresse per DHCP aus \(addressing.description)"
+                }
+                text += " (schnelles Netz)"
             case .fallback: text += " (Ausweich-Netz)"
             case .none: break
             }
@@ -207,12 +210,13 @@ struct VMDetailView: View {
     }
 
     /// Ziel für Remote Desktop: im schnellen Netz direkt die VM, sonst die Weiterleitung auf localhost.
+    /// Die Adresse steht erst fest, wenn die VM läuft (vmnet wählt den Bereich beim Start).
     private var remoteDesktopTarget: String? {
-        guard let port = config.windows.rdpHostPort else { return nil }
+        guard let port = config.windows.rdpHostPort, session.state.isActive else { return nil }
         switch session.engine.activeNetwork {
-        case .vmnet(let addressing): return addressing.guestAddress
+        case .vmnet(let addressing): return addressing?.guestAddress
         case .fallback: return "localhost:\(port)"
-        case .none: return config.network.addressing?.guestAddress ?? "localhost:\(port)"
+        case .none: return nil
         }
     }
 
@@ -315,12 +319,19 @@ struct VMDetailView: View {
     private var windowsSection: some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 10) {
-                if let target = remoteDesktopTarget {
+                if config.windows.rdpHostPort != nil {
                     HStack {
-                        Text("Remote Desktop über \(target)")
+                        if let target = remoteDesktopTarget {
+                            Text("Remote Desktop über \(target)")
+                        } else {
+                            Text("Remote Desktop: Adresse erscheint, sobald die VM läuft")
+                                .foregroundStyle(.secondary)
+                        }
                         Spacer()
-                        Button("RDP-Verbindung öffnen") { openRemoteDesktop(target: target) }
-                            .disabled(session.state != .running)
+                        Button("RDP-Verbindung öffnen") {
+                            if let target = remoteDesktopTarget { openRemoteDesktop(target: target) }
+                        }
+                        .disabled(session.state != .running || remoteDesktopTarget == nil)
                     }
                     Hint("Für die „Windows App“ von Microsoft. Die Verbindungsdatei schaltet Zwischenablage, Laufwerke und Geräte-Umleitung aus, die VM bleibt isoliert. Remote Desktop braucht Windows 11 Pro.")
                 }

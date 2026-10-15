@@ -246,13 +246,10 @@ final class AppleVMEngine: NSObject, VMEngine, VZVirtualMachineDelegate {
         case .none:
             return (nil, .none, nil)
         case .nat, .hostOnly:
-            guard let addressing = config.network.addressing else {
-                return (nil, config.network.mode == .nat ? .fallback : .none, nil)
-            }
             do {
                 let network = try VMNetwork(mode: config.network.mode == .nat ? .shared : .hostOnly,
-                                            addressing: addressing, guestMAC: config.network.macAddress)
-                return (network, .vmnet(addressing), nil)
+                                            guestMAC: config.network.macAddress)
+                return (network, .vmnet(network.addressing), nil)
             } catch {
                 if config.network.mode == .nat {
                     return (nil, .fallback, "Eigenes Netz (vmnet) nicht verfügbar: \(error.localizedDescription) Die VM nutzt Apples einfaches NAT.")

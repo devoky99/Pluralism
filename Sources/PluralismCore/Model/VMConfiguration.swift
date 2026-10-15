@@ -266,29 +266,40 @@ public enum NetworkMode: String, Codable, CaseIterable, Identifiable, Sendable {
     }
 }
 
-/// Adressen des eigenen Netzes einer VM. Jede VM bekommt ein eigenes /24-Netz
-/// (192.168.<index>.0), damit VMs sich nicht gegenseitig sehen.
-/// .1 ist der Mac, .2 bekommt der Gast fest per DHCP-Reservierung.
+/// Adressen des Netzes einer laufenden VM, so wie vmnet es angelegt hat.
+/// vmnet wählt den Adressbereich selbst (z. B. 192.168.64.0/24). Der Mac ist die erste
+/// nutzbare Adresse (.1), der Gast bekommt per DHCP-Reservierung die zweite (.2).
 public struct GuestNetworkAddressing: Codable, Equatable, Sendable {
-    /// Bereich für den dritten Teil der Adresse. Meidet 192.168.0 bis 192.168.2 und 192.168.178
-    /// (typische Heimnetze) sowie 192.168.64 (Standard von vmnet).
-    public static let indexRange = 120...169
+    public var subnet: String
+    public var prefixLength: Int
+    public var hostAddress: String
+    /// Feste Adresse des Gasts, nil wenn sie nicht reserviert werden konnte (dann per DHCP).
+    public var guestAddress: String?
 
-    public var index: Int
-
-    public init(index: Int) {
-        self.index = index
+    public init(subnet: String, prefixLength: Int, hostAddress: String, guestAddress: String?) {
+        self.subnet = subnet
+        self.prefixLength = prefixLength
+        self.hostAddress = hostAddress
+        self.guestAddress = guestAddress
     }
 
-    public var subnet: String { "192.168.\(index).0" }
-    public var mask: String { "255.255.255.0" }
-    public var hostAddress: String { "192.168.\(index).1" }
-    public var guestAddress: String { "192.168.\(index).2" }
-
-    /// Kleinster freier Index, nil wenn alle belegt sind.
-    public static func allocate(used: Set<Int>) -> GuestNetworkAddressing? {
-        indexRange.first { !used.contains($0) }.map(GuestNetworkAddressing.init(index:))
+    /// Adressen aus Netzadresse und Maske (beide in Netzwerk-Bytefolge als vier Bytes).
+    public static func from(network: [UInt8], mask: [UInt8], reserveGuest: Bool = true) -> GuestNetworkAddressing? {
+        guard network.count == 4, mask.count == 4 else { return nil }
+        let base = zip(network, mask).map { $0 & $1 }
+        let prefix = mask.reduce(0) { $0 + $1.nonzeroBitCount }
+        guard prefix >= 8, prefix <= 30 else { return nil }
+        func offset(_ value: UInt32) -> [UInt8] {
+            let number = (UInt32(base[0]) << 24 | UInt32(base[1]) << 16 | UInt32(base[2]) << 8 | UInt32(base[3])) + value
+            return [UInt8(number >> 24), UInt8((number >> 16) & 0xFF), UInt8((number >> 8) & 0xFF), UInt8(number & 0xFF)]
+        }
+        func dotted(_ bytes: [UInt8]) -> String { bytes.map(String.init).joined(separator: ".") }
+        return GuestNetworkAddressing(subnet: dotted(base), prefixLength: prefix,
+                                      hostAddress: dotted(offset(1)),
+                                      guestAddress: reserveGuest ? dotted(offset(2)) : nil)
     }
+
+    public var description: String { "\(subnet)/\(prefixLength)" }
 }
 
 public enum PortProtocol: String, Codable, CaseIterable, Identifiable, Sendable {
@@ -317,17 +328,13 @@ public struct PortForward: Codable, Equatable, Identifiable, Sendable {
 public struct NetworkSettings: Codable, Equatable, Sendable {
     public var mode: NetworkMode
     public var macAddress: String
-    /// Eigenes Netz der VM. Wird beim Anlegen oder beim ersten Start vergeben.
-    public var addressing: GuestNetworkAddressing?
     /// Weiterleitungen gelten nur im Ausweich-Netz (QEMU-Usermode), wenn vmnet nicht verfügbar ist.
     /// Mit vmnet ist der Gast vom Mac direkt unter seiner Adresse erreichbar.
     public var portForwards: [PortForward]
 
-    public init(mode: NetworkMode = .nat, macAddress: String = MACAddress.random(),
-                addressing: GuestNetworkAddressing? = nil, portForwards: [PortForward] = []) {
+    public init(mode: NetworkMode = .nat, macAddress: String = MACAddress.random(), portForwards: [PortForward] = []) {
         self.mode = mode
         self.macAddress = macAddress
-        self.addressing = addressing
         self.portForwards = portForwards
     }
 
@@ -335,7 +342,6 @@ public struct NetworkSettings: Codable, Equatable, Sendable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         mode = (try? c.decode(NetworkMode.self, forKey: .mode)) ?? .nat
         macAddress = try c.decode(.macAddress, default: MACAddress.random())
-        addressing = try c.decodeIfPresent(GuestNetworkAddressing.self, forKey: .addressing)
         portForwards = try c.decode(.portForwards, default: [])
     }
 }

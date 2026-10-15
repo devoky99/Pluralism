@@ -177,15 +177,22 @@ final class ConfigurationTests: XCTestCase {
     }
 
     func testNetworkAddressing() {
-        let first = GuestNetworkAddressing.allocate(used: [])
-        XCTAssertEqual(first?.index, 120)
-        XCTAssertEqual(first?.subnet, "192.168.120.0")
-        XCTAssertEqual(first?.hostAddress, "192.168.120.1")
-        XCTAssertEqual(first?.guestAddress, "192.168.120.2")
-        XCTAssertEqual(GuestNetworkAddressing.allocate(used: [120, 121])?.index, 122)
-        XCTAssertNil(GuestNetworkAddressing.allocate(used: Set(GuestNetworkAddressing.indexRange)))
-        XCTAssertFalse(GuestNetworkAddressing.indexRange.contains(178))
-        XCTAssertFalse(GuestNetworkAddressing.indexRange.contains(64))
+        let shared = GuestNetworkAddressing.from(network: [192, 168, 64, 0], mask: [255, 255, 255, 0])
+        XCTAssertEqual(shared, GuestNetworkAddressing(subnet: "192.168.64.0", prefixLength: 24,
+                                                      hostAddress: "192.168.64.1", guestAddress: "192.168.64.2"))
+        XCTAssertEqual(shared?.description, "192.168.64.0/24")
+        // Netzadresse wird aus einer Host-Adresse abgeleitet
+        let fromHost = GuestNetworkAddressing.from(network: [192, 168, 128, 1], mask: [255, 255, 255, 0])
+        XCTAssertEqual(fromHost?.subnet, "192.168.128.0")
+        XCTAssertEqual(fromHost?.guestAddress, "192.168.128.2")
+        // größeres Netz, Übertrag über Byte-Grenzen
+        let wide = GuestNetworkAddressing.from(network: [10, 0, 255, 255], mask: [255, 255, 0, 0])
+        XCTAssertEqual(wide?.subnet, "10.0.0.0")
+        XCTAssertEqual(wide?.prefixLength, 16)
+        XCTAssertEqual(wide?.hostAddress, "10.0.0.1")
+        XCTAssertNil(GuestNetworkAddressing.from(network: [192, 168, 64, 0], mask: [255, 255, 255, 0], reserveGuest: false)?.guestAddress)
+        XCTAssertNil(GuestNetworkAddressing.from(network: [1, 2, 3], mask: [255, 255, 255, 0]))
+        XCTAssertNil(GuestNetworkAddressing.from(network: [1, 2, 3, 4], mask: [255, 255, 255, 255]))
     }
 
     func testNetworkModeDecoding() throws {
@@ -195,7 +202,6 @@ final class ConfigurationTests: XCTestCase {
         """
         let config = try PluralismJSON.decoder().decode(VMConfiguration.self, from: Data(json.utf8))
         XCTAssertEqual(config.network.mode, .nat)
-        XCTAssertNil(config.network.addressing)
         XCTAssertEqual(MACAddress.bytes(config.network.macAddress), [0x52, 0x54, 0x00, 0x01, 0x02, 0x03])
     }
 

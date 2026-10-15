@@ -5,20 +5,19 @@ import PluralismNet
 
 // pluralism-netcheck: prüft das vmnet-Netzwerk von Pluralism ohne VM.
 //
-// Ablauf wie bei einer QEMU-VM: vmnet-Netz anlegen (eigenes /24, DHCP-Reservierung),
+// Ablauf wie bei einer QEMU-VM: vmnet-Netz anlegen (Bereich wählt vmnet, Reservierung der .2),
 // Paketbrücke starten, dann selbst den Gast spielen: über den Datagramm-Socket ein
 // DHCP-Discover senden und auf das Angebot von vmnet warten. Kommt die reservierte Adresse
 // zurück, funktionieren Netz, Reservierung und Brücke.
 //
-// Aufruf: pluralism-netcheck [--host-only] [--plain] [--index 150] [--timeout 6]
-// --plain: ohne eigenen Adressbereich und ohne Reservierung (Diagnose)
+// Aufruf: pluralism-netcheck [--host-only] [--no-reservation] [--others N] [--timeout 6]
+// --others N: vorher N weitere Netze anlegen und offen halten (wie andere laufende VMs)
 // Ausgabe: eine JSON-Zeile, Exit-Code 0 bei Erfolg.
 
 struct Options {
     var hostOnly = false
-    var setSubnet = true
     var reserve = true
-    var index = 150
+    var others = 0
     var timeout: TimeInterval = 6
 }
 
@@ -29,15 +28,10 @@ func parseOptions() -> Options {
         switch argument {
         case "--host-only":
             options.hostOnly = true
-        case "--plain":
-            options.setSubnet = false
-            options.reserve = false
-        case "--no-subnet":
-            options.setSubnet = false
         case "--no-reservation":
             options.reserve = false
-        case "--index":
-            if let value = arguments.next(), let index = Int(value) { options.index = index }
+        case "--others":
+            if let value = arguments.next(), let count = Int(value) { options.others = count }
         case "--timeout":
             if let value = arguments.next(), let seconds = Double(value) { options.timeout = seconds }
         default:
@@ -67,7 +61,7 @@ func report(_ fields: [String: Any], exitCode: Int32) -> Never {
 }
 
 let options = parseOptions()
-let addressing = GuestNetworkAddressing(index: options.index)
+let mode: VMNetworkMode = options.hostOnly ? .hostOnly : .shared
 let mac = MACAddress.random()
 let macBytes = MACAddress.bytes(mac)!
 let directory = "/tmp/pluralism-netcheck-\(getpid())"
@@ -76,15 +70,33 @@ let hostSocket = directory + "/h.sock"
 let guestSocket = directory + "/q.sock"
 cleanupPaths = [hostSocket, guestSocket]
 
-FileHandle.standardError.write("Netz \(addressing.subnet)/24 für \(mac) anlegen (uid \(getuid()))\n".data(using: .utf8)!)
+// Andere "laufende VMs" simulieren
+// (mit gestarteter Schnittstelle, sonst belegt vmnet den Adressbereich nicht)
+var otherRelays: [PacketRelay] = []
+var otherSubnets: [String] = []
+for index in 0..<options.others {
+    do {
+        let other = try VMNetwork(mode: mode, guestMAC: MACAddress.random())
+        let otherRelay = PacketRelay(network: other, hostSocketPath: directory + "/o\(index)h.sock",
+                                     guestSocketPath: directory + "/o\(index)q.sock")
+        cleanupPaths.append(directory + "/o\(index)h.sock")
+        try otherRelay.start()
+        otherRelays.append(otherRelay)
+        otherSubnets.append(other.addressing?.description ?? "?")
+    } catch {
+        report(["step": "others", "error": error.localizedDescription, "others": otherSubnets], exitCode: 7)
+    }
+}
+
+FileHandle.standardError.write("Netz für \(mac) anlegen (uid \(getuid()))\n".data(using: .utf8)!)
 
 let network: VMNetwork
 do {
-    network = try VMNetwork(mode: options.hostOnly ? .hostOnly : .shared, addressing: addressing, guestMAC: mac,
-                            setSubnet: options.setSubnet, reserveAddress: options.reserve)
+    network = try VMNetwork(mode: mode, guestMAC: mac, reserveAddress: options.reserve)
 } catch {
-    report(["step": "network", "error": error.localizedDescription], exitCode: 2)
+    report(["step": "network", "error": error.localizedDescription, "others": otherSubnets], exitCode: 2)
 }
+let addressing = network.addressing
 
 let relay = PacketRelay(network: network, hostSocketPath: hostSocket, guestSocketPath: guestSocket)
 do {
@@ -127,8 +139,9 @@ relay.stop()
 close(guestFD)
 
 let details: [String: Any] = [
-    "subnet": addressing.subnet,
-    "expected": addressing.guestAddress,
+    "subnet": addressing?.description ?? "?",
+    "expected": addressing?.guestAddress ?? "dynamisch",
+    "others": otherSubnets,
     "mtu": relay.mtu,
     "framesSeen": framesSeen,
     "toGuest": Int(statistics.framesToGuest),
@@ -139,7 +152,7 @@ let details: [String: Any] = [
 guard let offer else {
     report(details.merging(["step": "dhcp", "error": "keine DHCP-Antwort"]) { $1 }, exitCode: 5)
 }
-let matches = !options.reserve || offer.yourAddress == addressing.guestAddress
+let matches = addressing?.guestAddress == nil || offer.yourAddress == addressing?.guestAddress
 report(details.merging([
     "step": "done",
     "offer": offer.yourAddress,
