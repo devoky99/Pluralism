@@ -29,6 +29,7 @@ Leistung und Verwaltung.
 - [x] Windows-Netz über Paketbrücke QEMU ↔ vmnet, Linux über `VZVmnetNetworkDeviceAttachment`
 - [x] Netzwerk-Prüfprogramm in der CI (vmnet ohne Root, fester Bereich, DHCP-Reservierung, Neustarts, Ausweichbereich)
 - [x] Adresse des Gasts wird an seinen Rahmen erkannt und angezeigt (ohne Gastagent)
+- [x] Sprachmodus Swift 6 (Swift 6.4, Xcode 27) mit vollständiger Prüfung auf Datenrennen
 - [x] Linux-Platten standardmäßig ASIF
 
 ## 0.3: Netzwerk, Rest

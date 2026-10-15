@@ -114,6 +114,23 @@ Adresse prüfen. Die CI führt das bei jedem Push auf einem macOS-27-Runner ohne
 | Snapshots | `SnapshotService` | APFS-Klone von Platte, UEFI, TPM, Konfiguration |
 | Oberfläche | `UI/*` | Liste, Details, Assistent, Einstellungen, VM-Fenster, App-Einstellungen |
 
+## Nebenläufigkeit (Swift 6)
+
+Alle Module laufen im Sprachmodus Swift 6, der Compiler prüft also vollständig auf Datenrennen
+(Regeln in `CLAUDE.md`, Nachschlagewerk `docs/reference/swift-6.4-book.md`).
+
+| Bereich | Isolation |
+|---|---|
+| `AppModel`, `VMSession`, Engines, Downloads, alle Views | Main Actor |
+| Platten anlegen, QEMU starten, Sockets verbinden | `Background` (globale Dispatch-Queue), Ergebnisse `Sendable` |
+| QMP- und VNC-Lesethreads, Prozessende | eigene Threads, Rückrufe über `MainQueue` auf den Main Actor |
+| `PacketRelay` | eigene serielle Queue für allen Zustand |
+| `UnixSocket`, `RFBConnection`, `QMPClient` | `@unchecked Sendable` mit dokumentierter Regel (Lock, atomare Merker, unveränderliche Felder) |
+
+Der QEMU-Start läuft in drei Hintergrundschritten (vorbereiten und Netz, Prozesse, Verbindungen).
+Dazwischen prüft der Main Actor, ob der Start noch gilt. Abbrechen setzt einen atomaren Merker,
+den die wartenden Schritte lesen.
+
 ## VM-Ordner
 
 ```
