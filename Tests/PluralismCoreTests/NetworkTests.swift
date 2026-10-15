@@ -116,4 +116,109 @@ final class NetworkTests: XCTestCase {
         v6[13] = 0xDD
         XCTAssertNil(observe(v6))
     }
+
+    // MARK: Stream-Rahmen (QEMU -netdev stream)
+
+    func testStreamFramingRoundTripWithArbitraryChunks() throws {
+        let frames: [[UInt8]] = [[1, 2, 3], Array(repeating: 0xAB, count: 1514), [], [9]]
+        let stream = frames.flatMap { StreamFraming.encode($0) }
+        XCTAssertEqual(Array(StreamFraming.encode([7, 8]).prefix(4)), [0, 0, 0, 2])
+        for chunkSize in [1, 3, 7, 1000, stream.count] {
+            var decoder = StreamFrameDecoder()
+            var decoded: [[UInt8]] = []
+            var offset = 0
+            while offset < stream.count {
+                let end = min(offset + chunkSize, stream.count)
+                try Array(stream[offset..<end]).withUnsafeBytes { raw in
+                    try decoder.append(raw) { decoded.append(Array($0)) }
+                }
+                offset = end
+            }
+            XCTAssertEqual(decoded, frames, "Stückgröße \(chunkSize)")
+            XCTAssertEqual(decoder.pendingByteCount, 0)
+        }
+    }
+
+    func testStreamFramingRejectsHugeLength() {
+        var decoder = StreamFrameDecoder()
+        let bad: [UInt8] = [0x7F, 0, 0, 0, 1, 2]
+        XCTAssertThrowsError(try bad.withUnsafeBytes { raw in try decoder.append(raw) { _ in } })
+    }
+
+    // MARK: Pakete für die Netzprüfung
+
+    func testDHCPRequestCarriesRequestedAddressAndServer() {
+        let frame = DHCPProbe.requestFrame(mac: mac, transactionID: 7, requested: [192, 168, 160, 2], server: [192, 168, 160, 1])
+        let bootp = Array(frame[42...])
+        XCTAssertEqual(Array(bootp[240..<243]), [53, 1, 3])
+        XCTAssertEqual(Array(bootp[243..<249]), [50, 4, 192, 168, 160, 2])
+        XCTAssertEqual(Array(bootp[249..<255]), [54, 4, 192, 168, 160, 1])
+        XCTAssertEqual(DHCPProbe.checksum(Array(frame[14..<34])), 0)
+    }
+
+    func testARPRoundTrip() {
+        let request = Packets.arpRequest(senderMAC: mac, senderIP: [10, 0, 0, 2], targetIP: [10, 0, 0, 1])
+        XCTAssertEqual(request.count, 42)
+        XCTAssertEqual(Array(request[0..<6]), Packets.broadcastMAC)
+        let parsed = Packets.parseARP(request)
+        XCTAssertEqual(parsed?.operation, 1)
+        XCTAssertEqual(parsed?.senderIP, [10, 0, 0, 2])
+        XCTAssertEqual(parsed?.targetIP, [10, 0, 0, 1])
+        let reply = Packets.arpReply(senderMAC: [2, 0, 0, 0, 0, 1], senderIP: [10, 0, 0, 1], targetMAC: mac, targetIP: [10, 0, 0, 2])
+        XCTAssertEqual(Array(reply[0..<6]), mac)
+        XCTAssertEqual(Packets.parseARP(reply)?.operation, 2)
+        XCTAssertEqual(Packets.parseARP(reply)?.senderMAC, [2, 0, 0, 0, 0, 1])
+    }
+
+    func testIPv4UDPChecksumsAndParsing() {
+        let source: [UInt8] = [192, 168, 160, 2]
+        let destination: [UInt8] = [192, 168, 160, 1]
+        let udp = Packets.udp(source: source, destination: destination, sourcePort: 5000, destinationPort: 53, payload: [1, 2, 3])
+        let pseudo = DHCPProbe.pseudoHeader(source: source, destination: destination, proto: 17, length: UInt16(udp.count))
+        XCTAssertEqual(DHCPProbe.checksum(pseudo + udp), 0)
+        let ip = Packets.ipv4(source: source, destination: destination, proto: .udp, payload: udp, identification: 9)
+        XCTAssertEqual(DHCPProbe.checksum(Array(ip[0..<20])), 0)
+        let frame = Packets.ethernet(destination: [2, 0, 0, 0, 0, 1], source: mac, type: 0x0800, payload: ip)
+        let packet = Packets.parseIPv4(frame)
+        XCTAssertEqual(packet?.source, source)
+        XCTAssertEqual(packet?.destination, destination)
+        let parsed = packet.flatMap(Packets.parseUDP)
+        XCTAssertEqual(parsed, Packets.UDP(sourcePort: 5000, destinationPort: 53, payload: [1, 2, 3]))
+        // Ethernet-Auffüllung hinter dem IP-Paket stört nicht
+        XCTAssertEqual(Packets.parseIPv4(frame + [0, 0, 0, 0])?.payload, udp)
+    }
+
+    func testTCPSynChecksumAndFlags() {
+        let source: [UInt8] = [192, 168, 160, 2]
+        let destination: [UInt8] = [1, 1, 1, 1]
+        let segment = Packets.tcp(source: source, destination: destination, sourcePort: 40000, destinationPort: 443,
+                                  sequence: 0x01020304, acknowledgment: 0, flags: [.syn])
+        XCTAssertEqual(segment.count, 24)
+        let pseudo = DHCPProbe.pseudoHeader(source: source, destination: destination, proto: 6, length: UInt16(segment.count))
+        XCTAssertEqual(DHCPProbe.checksum(pseudo + segment), 0)
+        let packet = Packets.IPv4(source: source, destination: destination, proto: 6, payload: segment)
+        let parsed = Packets.parseTCP(packet)
+        XCTAssertEqual(parsed?.sequence, 0x01020304)
+        XCTAssertEqual(parsed?.destinationPort, 443)
+        XCTAssertEqual(parsed?.flags, Packets.TCPFlags.syn)
+    }
+
+    func testICMPEchoAndDNS() {
+        let echo = Packets.icmpEchoRequest(identifier: 0x1234, sequence: 1)
+        XCTAssertEqual(DHCPProbe.checksum(echo), 0)
+        var reply = echo
+        reply[0] = 0
+        XCTAssertEqual(Packets.icmpEchoReplyIdentifier(Packets.IPv4(source: [1, 1, 1, 1], destination: [10, 0, 0, 2], proto: 1, payload: reply)), 0x1234)
+        XCTAssertNil(Packets.icmpEchoReplyIdentifier(Packets.IPv4(source: [1, 1, 1, 1], destination: [10, 0, 0, 2], proto: 1, payload: echo)))
+
+        let query = Packets.dnsQuery(identifier: 0xBEEF, name: "apple.com")
+        XCTAssertEqual(Array(query[12...]), [5] + Array("apple".utf8) + [3] + Array("com".utf8) + [0, 0, 1, 0, 1])
+        XCTAssertNil(Packets.parseDNSResponse(query, identifier: 0xBEEF))   // Anfrage ist keine Antwort
+        var response = query
+        response[2] = 0x81
+        response[3] = 0x80
+        response[7] = 2
+        XCTAssertEqual(Packets.parseDNSResponse(response, identifier: 0xBEEF), Packets.DNSAnswer(responseCode: 0, answerCount: 2))
+        XCTAssertNil(Packets.parseDNSResponse(response, identifier: 0xBEEE))
+    }
 }

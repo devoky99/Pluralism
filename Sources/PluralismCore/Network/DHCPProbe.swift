@@ -23,6 +23,15 @@ public enum DHCPProbe {
 
     /// Ethernet-Rahmen mit IPv4/UDP/BOOTP-DHCPDISCOVER von `mac` (Broadcast).
     public static func discoverFrame(mac: [UInt8], transactionID: UInt32) -> [UInt8] {
+        message(.discover, mac: mac, transactionID: transactionID, options: [])
+    }
+
+    /// DHCPREQUEST für die angebotene Adresse (so bestätigt ein Gast das Angebot).
+    public static func requestFrame(mac: [UInt8], transactionID: UInt32, requested: [UInt8], server: [UInt8]) -> [UInt8] {
+        message(.request, mac: mac, transactionID: transactionID, options: [50, 4] + requested + [54, 4] + server)
+    }
+
+    static func message(_ type: MessageType, mac: [UInt8], transactionID: UInt32, options: [UInt8]) -> [UInt8] {
         precondition(mac.count == 6, "MAC-Adresse braucht 6 Bytes")
 
         // BOOTP-Teil
@@ -35,7 +44,8 @@ public enum DHCPProbe {
         bootp[10] = 0x80                            // flags: Broadcast-Antwort erbeten
         bootp.replaceSubrange(28..<34, with: mac)   // chaddr
         bootp += [99, 130, 83, 99]                  // Magic Cookie
-        bootp += [53, 1, MessageType.discover.rawValue]
+        bootp += [53, 1, type.rawValue]
+        bootp += options
         bootp += [61, 7, 1] + mac                   // Client Identifier
         bootp += [55, 3, 1, 3, 6]                   // Parameter: Maske, Router, DNS
         bootp += [255]                              // Ende

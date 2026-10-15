@@ -61,6 +61,11 @@ public enum VMNetworkMode: Sendable {
 ///   (192.168.64.0/24, dann .65, .66 …; „Nur Mac“ ab 192.168.128.0/24).
 /// - Der einzige Gast im Netz bekommt per DHCP die .2.
 ///
+/// Speicher: `vmnet_network_create` und `vmnet_network_configuration_create` liefern Core-Foundation-Objekte,
+/// die Swift nicht selbst verwaltet. Ohne `CFRelease` bleibt das Netz samt Adressbereich bis zum Ende des
+/// Prozesses bestehen. Die Konfiguration wird gleich nach dem Anlegen freigegeben, das Netz in `deinit`.
+/// Schnittstellen (`PacketRelay`) und `VZVmnetNetworkDeviceAttachment` halten das Netz, solange sie es nutzen.
+///
 /// Unveränderlich nach dem Anlegen; vmnet-Objekte dürfen aus beliebigen Threads benutzt werden.
 public final class VMNetwork: @unchecked Sendable {
     public let ref: vmnet_network_ref
@@ -97,6 +102,15 @@ public final class VMNetwork: @unchecked Sendable {
         }
     }
 
+    deinit {
+        VMNetwork.release(ref)
+    }
+
+    /// Gibt ein vmnet-Objekt frei (entspricht `CFRelease`).
+    static func release(_ object: OpaquePointer) {
+        Unmanaged<CFTypeRef>.fromOpaque(UnsafeRawPointer(object)).release()
+    }
+
     /// Legt ein Netz an, optional mit eigenem Bereich (/24) und Reservierung von `address` für `mac`.
     static func create(mode: VMNetworkMode, subnet: [UInt8]?, mac: [UInt8]?, address: [UInt8]?) throws -> vmnet_network_ref {
         var status = vmnet_return_t.VMNET_SUCCESS
@@ -105,6 +119,7 @@ public final class VMNetwork: @unchecked Sendable {
               status == .VMNET_SUCCESS else {
             throw VMNetworkError.vmnet("Netzkonfiguration anlegen", Int(status.rawValue))
         }
+        defer { release(configuration) }
         if let subnet, subnet.count == 4 {
             var network = VMNetwork.inAddr(subnet)
             var mask = VMNetwork.inAddr([255, 255, 255, 0])
@@ -149,4 +164,54 @@ public final class VMNetwork: @unchecked Sendable {
         let parts = dotted.split(separator: ".").compactMap { UInt8($0) }
         return parts.count == 4 ? parts : nil
     }
+}
+
+/// Prüft die ältere vmnet-Schnittstelle (`vmnet_start_interface`), die QEMUs eingebaute
+/// Netdevs `vmnet-shared` und `vmnet-host` benutzen. Sie braucht laut Apple Root oder das
+/// nur auf Antrag vergebene Entitlement `com.apple.vm.networking`. Nur für `pluralism-netcheck`.
+public enum LegacyVmnetProbe {
+    public struct Result: Sendable {
+        public var status: Int
+        public var mtu: Int
+        public var startAddress: String?
+    }
+
+    public static func run(mode: VMNetworkMode, timeout: TimeInterval = 10) -> Result {
+        let description = xpc_dictionary_create(nil, nil, 0)
+        let operatingMode: operating_modes_t = mode == .shared ? .VMNET_SHARED_MODE : .VMNET_HOST_MODE
+        xpc_dictionary_set_uint64(description, vmnet_operation_mode_key, UInt64(operatingMode.rawValue))
+        let queue = DispatchQueue(label: "pluralism.net.legacy")
+        let semaphore = DispatchSemaphore(value: 0)
+        let box = LegacyResultBox()
+        let interface = vmnet_start_interface(description, queue) { status, parameters in
+            box.status = Int(status.rawValue)
+            if let parameters {
+                box.mtu = Int(xpc_dictionary_get_uint64(parameters, vmnet_mtu_key))
+                if let start = xpc_dictionary_get_string(parameters, vmnet_start_address_key) {
+                    box.startAddress = String(cString: start)
+                }
+            }
+            semaphore.signal()
+        }
+        guard let interface else {
+            return Result(status: 1001, mtu: 0, startAddress: nil)
+        }
+        guard semaphore.wait(timeout: .now() + timeout) == .success else {
+            return Result(status: -1, mtu: 0, startAddress: nil)
+        }
+        let result = queue.sync { Result(status: box.status, mtu: box.mtu, startAddress: box.startAddress) }
+        if result.status == Int(vmnet_return_t.VMNET_SUCCESS.rawValue) {
+            let stopped = DispatchSemaphore(value: 0)
+            if vmnet_stop_interface(interface, queue, { _ in stopped.signal() }) == .VMNET_SUCCESS {
+                _ = stopped.wait(timeout: .now() + 3)
+            }
+        }
+        return result
+    }
+}
+
+private final class LegacyResultBox: @unchecked Sendable {
+    var status = -1
+    var mtu = 0
+    var startAddress: String?
 }

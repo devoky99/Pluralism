@@ -143,17 +143,20 @@ jobs:
             BIN="$SIGNED"
             codesign -d --entitlements - "$BIN" 2>/dev/null | grep -o "com.apple.security.[a-z.-]*" | tr '\n' ' '; echo
             run() { echo "## $1"; shift; "$BIN" "$@" || echo "exit=$?"; }
-            run "A Internet und Mac, vmnet wählt"
-            run "B Nur Mac, vmnet wählt"                     --host-only
-            run "C fester Bereich (App)"                      --app --subnet 192.168.160.1
-            run "D Nur Mac, fester Bereich (App)"             --app --host-only --subnet 192.168.200.1
-            run "E VM dreimal starten (App)"                  --app --subnet 192.168.161.1 --cycles 3
-            run "F dreimal ohne festen Bereich (App)"         --app --cycles 3
-            run "G fester Bereich belegt, Ausweg (App)"       --app --subnet 192.168.162.1 --block
-            run "H zwei andere VMs laufen (App)"              --app --subnet 192.168.163.1 --others 2
-            run "I fester Bereich mit .0 (erwartet: Fehler)"   --subnet 192.168.96.0
-            run "J gleicher Bereich zweimal im selben Prozess (erwartet: Fehler)" --subnet 192.168.98.1 --cycles 2
-            BIN="$PLAIN"; run "K ohne Entitlement"
+            QEMU="$PWD/build/runtime/bin/qemu-system-aarch64"
+            run "A Internet und Mac, fester Bereich, alles prüfen"     --app --subnet 192.168.160.1
+            run "B Nur Mac, fester Bereich, alles prüfen"              --app --host-only --subnet 192.168.200.1
+            run "C vmnet wählt den Bereich"                            --quick
+            run "D VM dreimal starten (App)"                           --app --subnet 192.168.161.1 --cycles 3 --quick
+            run "E gleicher Bereich zweimal ohne Registry"             --subnet 192.168.98.1 --cycles 2 --quick
+            run "F fester Bereich belegt, Ausweg (App)"                --app --subnet 192.168.162.1 --block --quick
+            run "G zwei andere VMs laufen (App)"                       --app --subnet 192.168.163.1 --others 2 --quick
+            run "H echtes QEMU an der Brücke"                          --subnet 192.168.164.1 --qemu "$QEMU"
+            run "I alte vmnet-Schnittstelle (QEMU vmnet-shared)"       --legacy
+            run "J alte vmnet-Schnittstelle, Nur Mac"                  --legacy --host-only
+            BIN="$PLAIN"
+            run "K ohne Entitlement"                                   --quick
+            run "L alte Schnittstelle ohne Entitlement"                --legacy
           } 2>&1 | tee "$RUNNER_TEMP/logs/25-netcheck.log"
       - name: App-Bundle bauen und signieren
         run: |

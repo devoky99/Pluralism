@@ -9,7 +9,7 @@ import PluralismNet
 /// ihn über QMP und zeigt das Bild über eine lokale VNC-Verbindung an.
 ///
 /// Netzwerk: Pluralism legt ein eigenes vmnet-Netz für die VM an und reicht die Ethernet-Rahmen
-/// zwischen QEMU (-netdev dgram) und vmnet durch. Klappt das nicht, nutzt QEMU sein eingebautes
+/// zwischen QEMU (-netdev stream) und vmnet durch. Klappt das nicht, nutzt QEMU sein eingebautes
 /// Usermode-Netz als Ausweichweg.
 @MainActor
 final class QEMUEngine: VMEngine {
@@ -232,7 +232,7 @@ final class QEMUEngine: VMEngine {
         try fm.createDirectory(at: runtime.directory, withIntermediateDirectories: true,
                                attributes: [.posixPermissions: 0o700])
         try? fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: runtime.directory.deletingLastPathComponent().path)
-        for socket in [runtime.qmpSocket, runtime.vncSocket, runtime.tpmSocket, runtime.netGuestSocket, runtime.netHostSocket] {
+        for socket in [runtime.qmpSocket, runtime.vncSocket, runtime.tpmSocket, runtime.netSocket] {
             try? fm.removeItem(at: socket)
         }
 
@@ -286,13 +286,10 @@ final class QEMUEngine: VMEngine {
                 let (network, fixedNotice) = try VMNetworkRegistry.shared.acquire(
                     mode: mode, guestMAC: config.network.macAddress,
                     fixedHostAddress: FixedSubnet.hostAddress(slot: config.network.slot, mode: config.network.mode))
-                let relay = PacketRelay(network: network,
-                                        hostSocketPath: runtime.netHostSocket.path,
-                                        guestSocketPath: runtime.netGuestSocket.path)
+                let relay = PacketRelay(network: network, socketPath: runtime.netSocket.path)
                 relay.onGuestAddress = onGuestAddress
                 try relay.start()
-                return NetworkSetup(backend: .vmnetRelay(guestSocket: runtime.netGuestSocket.path,
-                                                         hostSocket: runtime.netHostSocket.path),
+                return NetworkSetup(backend: .vmnetRelay(socket: runtime.netSocket.path),
                                     relay: relay, active: .vmnet(network.addressing), notice: fixedNotice)
             } catch {
                 let notice = "Schnelles Netzwerk (vmnet) nicht verfügbar: \(error.localizedDescription) Die VM nutzt das langsamere Ausweich-Netz."

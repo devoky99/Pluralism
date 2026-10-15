@@ -1,17 +1,23 @@
 import Foundation
 import PluralismCore
 
-/// Hält die vmnet-Netze, solange Pluralism läuft.
+/// Vergibt die vmnet-Netze der VMs.
 ///
-/// Geprüft auf macOS 27: Ein freigegebenes Netz gibt seinen Adressbereich erst frei, wenn der
-/// Prozess endet. Ein zweites Netz mit demselben festen Bereich scheitert im selben Prozess,
-/// ein Netz ohne festen Bereich bekäme bei jedem Start den nächsten Bereich. Deshalb wird das
-/// Netz einer VM beim nächsten Start wiederverwendet, die Adresse bleibt gleich.
+/// Wie bei der Apple-Engine von UTM: Das Netz gehört denen, die es benutzen (Paketbrücke bzw.
+/// `VZVmnetNetworkDeviceAttachment`). Die Registry merkt es sich nur schwach. Solange es noch
+/// jemand hält (z. B. eine VM, die gerade beendet wird), bekommt ein neuer Start dasselbe Netz;
+/// sonst entsteht ein neues mit demselben festen Bereich. Ist der Bereich belegt, wählt vmnet einen.
+///
+/// Nebenläufigkeit: `entries` nur unter `lock`.
 public final class VMNetworkRegistry: @unchecked Sendable {
     public static let shared = VMNetworkRegistry()
 
+    private struct Entry {
+        weak var network: VMNetwork?
+    }
+
     private let lock = NSLock()
-    private var networks: [String: VMNetwork] = [:]
+    private var entries: [String: Entry] = [:]
 
     public init() {}
 
@@ -20,11 +26,12 @@ public final class VMNetworkRegistry: @unchecked Sendable {
         let key = "\(mode)|\(subnet ?? "auto")|\(guestMAC.lowercased())"
         lock.lock()
         defer { lock.unlock() }
-        if let existing = networks[key] {
+        if let existing = entries[key]?.network {
             return existing
         }
+        entries = entries.filter { $0.value.network != nil }
         let network = try VMNetwork(mode: mode, guestMAC: guestMAC, subnet: subnet)
-        networks[key] = network
+        entries[key] = Entry(network: network)
         return network
     }
 
@@ -39,8 +46,8 @@ public final class VMNetworkRegistry: @unchecked Sendable {
             let network = try network(mode: mode, guestMAC: guestMAC, subnet: nil)
             let fixed = VMNetwork.bytes(fixedHostAddress).map { "\($0[0]).\($0[1]).\($0[2]).0/24" } ?? fixedHostAddress
             let range = network.addressing?.description ?? "einem anderen Bereich"
-            let notice = "Der feste Adressbereich \(fixed) ist gerade belegt (z. B. nach Ändern der MAC-Adresse). "
-                + "Die VM bekommt diesmal eine Adresse aus \(range). Nach einem Neustart von Pluralism gilt wieder die feste Adresse."
+            let notice = "Der feste Adressbereich \(fixed) ist gerade belegt (etwa durch ein anderes Programm oder ein VPN). "
+                + "Die VM bekommt diesmal eine Adresse aus \(range)."
             return (network, notice)
         }
     }

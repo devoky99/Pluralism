@@ -201,11 +201,10 @@ final class QEMUTests: XCTestCase {
         let runtime = RuntimePaths(config: config, userID: 501)
         let plan = try QEMUCommandBuilder.makePlan(config: config, bundle: bundle, toolchain: toolchain, runtime: runtime,
                                                    media: QEMUMedia(),
-                                                   network: .vmnetRelay(guestSocket: runtime.netGuestSocket.path,
-                                                                        hostSocket: runtime.netHostSocket.path))
+                                                   network: .vmnetRelay(socket: runtime.netSocket.path))
         let base = "/tmp/pluralism-501/\(config.shortID)"
         XCTAssertEqual(values(after: "-netdev", in: plan.qemu.arguments),
-                       ["dgram,id=net0,local.type=unix,local.path=\(base)/net-q.sock,remote.type=unix,remote.path=\(base)/net-h.sock"])
+                       ["stream,id=net0,server=off,addr.type=unix,addr.path=\(base)/net.sock,reconnect-ms=1000"])
         XCTAssertTrue(values(after: "-device", in: plan.qemu.arguments).contains("virtio-net-pci,netdev=net0,mac=\(config.network.macAddress)"))
         XCTAssertTrue(runtime.allSocketPathsFit)
     }

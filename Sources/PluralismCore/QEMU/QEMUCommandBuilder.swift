@@ -35,9 +35,10 @@ public struct QEMUMedia: Equatable, Sendable {
 public enum QEMUNetworkBackend: Equatable, Sendable {
     /// Keine Netzwerkkarte.
     case none
-    /// Paketbrücke zu Apples vmnet: QEMU schickt Ethernet-Rahmen über einen Datagramm-Socket
-    /// an Pluralism, Pluralism reicht sie an vmnet weiter. Schnell, kein Root nötig (macOS 26+).
-    case vmnetRelay(guestSocket: String, hostSocket: String)
+    /// Paketbrücke zu Apples vmnet: QEMU verbindet sich mit einem Unix-Stream-Socket von Pluralism
+    /// und schickt die Ethernet-Rahmen mit Längenfeld, Pluralism reicht sie an vmnet weiter.
+    /// Kein Root und kein Apple-Sonderrecht nötig (macOS 26+). Verbindet neu, falls die Brücke neu startet.
+    case vmnetRelay(socket: String)
     /// QEMUs eingebautes Usermode-Netz (Ausweichweg). Langsamer, mit Portweiterleitungen auf 127.0.0.1.
     case user(forwards: [PortForward])
 }
@@ -65,6 +66,25 @@ public struct QEMULaunchPlan: Equatable, Sendable {
 /// - Isolation: kein Agentenkanal (virtio-serial/vdagent), keine Ordnerfreigabe (9p),
 ///   nur Netzwerk und Peripherie
 public enum QEMUCommandBuilder {
+    /// Wert für `-netdev` (Kennung `net0`), nil ohne Netzwerkkarte.
+    public static func netdevArgument(_ backend: QEMUNetworkBackend, restrictToHost: Bool) -> String? {
+        switch backend {
+        case .none:
+            return nil
+        case .vmnetRelay(let socket):
+            return "stream,id=net0,server=off,addr.type=unix,addr.path=\(escape(socket)),reconnect-ms=1000"
+        case .user(let forwards):
+            var netdev = "user,id=net0"
+            if restrictToHost {
+                netdev += ",restrict=on"
+            }
+            for forward in forwards {
+                netdev += ",hostfwd=\(forward.proto.rawValue):127.0.0.1:\(forward.hostPort)-:\(forward.guestPort)"
+            }
+            return netdev
+        }
+    }
+
     public static func makePlan(config: VMConfiguration,
                                 bundle: VMBundle,
                                 toolchain: QEMUToolchain,
@@ -172,19 +192,7 @@ public enum QEMUCommandBuilder {
 
         // Netzwerk
         let backend = network ?? (config.network.mode == .none ? .none : .user(forwards: allPortForwards(config)))
-        switch backend {
-        case .none:
-            break
-        case .vmnetRelay(let guestSocket, let hostSocket):
-            args += ["-netdev", "dgram,id=net0,local.type=unix,local.path=\(escape(guestSocket)),remote.type=unix,remote.path=\(escape(hostSocket))"]
-        case .user(let forwards):
-            var netdev = "user,id=net0"
-            if config.network.mode == .hostOnly {
-                netdev += ",restrict=on"
-            }
-            for forward in forwards {
-                netdev += ",hostfwd=\(forward.proto.rawValue):127.0.0.1:\(forward.hostPort)-:\(forward.guestPort)"
-            }
+        if let netdev = netdevArgument(backend, restrictToHost: config.network.mode == .hostOnly) {
             args += ["-netdev", netdev]
         }
         if backend != .none {

@@ -6,9 +6,15 @@ import vmnet
 
 /// Paketbrücke zwischen einer QEMU-Netzwerkkarte und einem vmnet-Netz.
 ///
-/// QEMU läuft mit `-netdev dgram`: Jeder Ethernet-Rahmen des Gasts kommt als ein Datagramm
-/// über einen Unix-Socket bei Pluralism an und geht unverändert an vmnet, und umgekehrt.
-/// So bekommt die Windows-VM Apples schnellen Netzstack, ohne dass QEMU Root-Rechte braucht.
+/// QEMU läuft mit `-netdev stream` und verbindet sich mit einem Unix-Stream-Socket von Pluralism.
+/// Vor jedem Ethernet-Rahmen stehen 4 Byte Länge (`StreamFraming`). Pluralism reicht die Rahmen
+/// gebündelt an vmnet weiter und umgekehrt. So bekommt die Windows-VM Apples Netzstack, ohne dass
+/// QEMU Root-Rechte oder das Apple-Entitlement `com.apple.vm.networking` braucht.
+///
+/// Warum Stream statt Datagramm: Bei Unix-Datagrammen verwirft macOS Rahmen, sobald der
+/// Empfangspuffer von QEMU (4 KB, also zwei volle Rahmen) voll ist. Bei einem Stream wartet der
+/// Sender stattdessen, und Pluralism puffert bis zu `outboundLimit` Bytes. Erst darüber werden
+/// Rahmen verworfen, wie bei einem überlasteten Switch-Port.
 ///
 /// Nebenläufigkeit: Aller veränderliche Zustand gehört der seriellen `queue`. `start()` und `stop()`
 /// werden von außen aufgerufen und greifen über `queue.sync` zu. Die Rückrufe `frameObserver` und
@@ -19,31 +25,43 @@ public final class PacketRelay: @unchecked Sendable {
         public var framesFromGuest: UInt64 = 0
         public var droppedToGuest: UInt64 = 0
         public var droppedFromGuest: UInt64 = 0
+        /// Verbindungen von QEMU (mehr als eine nach einem Neustart von QEMU).
+        public var connections: Int = 0
+        /// Höchster Pufferstand Richtung QEMU in Bytes.
+        public var peakBufferedToGuest: Int = 0
     }
 
     public let network: VMNetwork
-    public let hostSocketPath: String
-    public let guestSocketPath: String
+    /// Unix-Socket, mit dem sich QEMU verbindet.
+    public let socketPath: String
     public private(set) var mtu: Int = 1500
     public private(set) var maxPacketSize: Int = 1514
 
     /// Wird (auf einer internen Queue) aufgerufen, wenn ein Rahmen vom Netz für den Gast ankommt.
-    /// Nur für Prüfprogramme gedacht; normalerweise gehen die Rahmen direkt an QEMU.
+    /// Nur für Prüfprogramme gedacht.
     public var frameObserver: (@Sendable ([UInt8]) -> Void)?
 
     /// Wird (auf einer internen Queue) aufgerufen, sobald der Gast eine neue IPv4-Adresse benutzt.
     public var onGuestAddress: (@Sendable (String) -> Void)?
 
+    /// So viele Bytes dürfen auf QEMU warten, darüber werden Rahmen verworfen.
+    private let outboundLimit = 4 << 20
+    private let receiveChunk = 256 << 10
+    private let batchSize = 64
+
     private let queue = DispatchQueue(label: "pluralism.net.relay", qos: .userInteractive)
     private var interface: interface_ref?
-    private var fd: Int32 = -1
-    private var readSource: DispatchSourceRead?
-    private var guestAddress = sockaddr_un()
+    private var acceptSource: DispatchSourceRead?
+    private var client: Client?
+    private var decoder = StreamFrameDecoder()
+    private var outbound: [UInt8] = []
+    private var outboundStart = 0
+    private var pendingWrites = 0
     private var stats = Statistics()
     private var watcher: GuestAddressWatcher?
     private var learnedAddress: String?
 
-    private let batchSize = 64
+    private var receiveBuffer: UnsafeMutableRawPointer?
     private var readPackets: UnsafeMutablePointer<vmpktdesc>?
     private var readIovecs: UnsafeMutablePointer<iovec>?
     private var readStorage: UnsafeMutableRawPointer?
@@ -51,10 +69,24 @@ public final class PacketRelay: @unchecked Sendable {
     private var writeIovecs: UnsafeMutablePointer<iovec>?
     private var writeStorage: UnsafeMutableRawPointer?
 
-    public init(network: VMNetwork, hostSocketPath: String, guestSocketPath: String) {
+    /// Eine Verbindung von QEMU mit Lese- und Schreibquelle. Der Deskriptor wird geschlossen,
+    /// wenn beide Quellen abgemeldet sind (vorher wäre er womöglich schon neu vergeben).
+    private final class Client {
+        let fd: Int32
+        let readSource: DispatchSourceRead
+        let writeSource: DispatchSourceWrite
+        var writeSourceActive = false
+
+        init(fd: Int32, readSource: DispatchSourceRead, writeSource: DispatchSourceWrite) {
+            self.fd = fd
+            self.readSource = readSource
+            self.writeSource = writeSource
+        }
+    }
+
+    public init(network: VMNetwork, socketPath: String) {
         self.network = network
-        self.hostSocketPath = hostSocketPath
-        self.guestSocketPath = guestSocketPath
+        self.socketPath = socketPath
         if let addressing = network.addressing, let subnet = VMNetwork.bytes(addressing.subnet) {
             let prefix = addressing.prefixLength
             let maskValue: UInt32 = prefix == 0 ? 0 : UInt32.max << (32 - UInt32(prefix))
@@ -64,26 +96,27 @@ public final class PacketRelay: @unchecked Sendable {
         }
     }
 
+    deinit {
+        // Niemand hält die Brücke mehr, also läuft auch kein Ereignis mehr: direkt aufräumen.
+        let stopped = shutDownLocked()
+        PacketRelay.stopInterface(stopped)
+        freeBuffers()
+    }
+
     /// Adresse, die der Gast zuletzt benutzt hat (aus seinen eigenen Rahmen).
     public var guestIPv4: String? {
         queue.sync { learnedAddress }
-    }
-
-    deinit {
-        stop()
-        freeBuffers()
     }
 
     public var statistics: Statistics {
         queue.sync { stats }
     }
 
-    /// Bindet den Socket und startet die vmnet-Schnittstelle. Blockiert, bis vmnet antwortet.
+    /// Öffnet den Socket für QEMU und startet die vmnet-Schnittstelle. Blockiert, bis vmnet antwortet.
     /// Darf nicht auf der internen Queue aufgerufen werden.
     public func start(timeout: TimeInterval = 10) throws {
-        guard interface == nil else { return }
-        guestAddress = try UnixDatagram.address(guestSocketPath)
-        fd = try UnixDatagram.bind(hostSocketPath)
+        guard queue.sync(execute: { interface == nil }) else { return }
+        let listenFD = try UnixStream.listen(socketPath)
 
         let description = xpc_dictionary_create(nil, nil, 0)
         // Der Gast benutzt seine eigene MAC-Adresse (für die DHCP-Reservierung).
@@ -100,87 +133,168 @@ public final class PacketRelay: @unchecked Sendable {
             semaphore.signal()
         }
         guard let started else {
-            cleanupSocket()
+            closeListener(listenFD)
             throw VMNetworkError.vmnet("Schnittstelle starten", 1001)
         }
         guard semaphore.wait(timeout: .now() + timeout) == .success else {
             _ = vmnet_stop_interface(started, DispatchQueue.global()) { _ in }
-            cleanupSocket()
+            closeListener(listenFD)
             throw VMNetworkError.timeout
         }
         guard result.status == .VMNET_SUCCESS else {
-            cleanupSocket()
+            closeListener(listenFD)
             throw VMNetworkError.vmnet("Schnittstelle starten", Int(result.status.rawValue))
         }
+        var reportedMTU = 0
+        var reportedMax = 0
         if let parameters = result.parameters {
-            let reportedMTU = Int(xpc_dictionary_get_uint64(parameters, vmnet_mtu_key))
-            let reportedMax = Int(xpc_dictionary_get_uint64(parameters, vmnet_max_packet_size_key))
-            if reportedMTU > 0 { mtu = reportedMTU }
-            if reportedMax > 0 { maxPacketSize = reportedMax }
+            reportedMTU = Int(xpc_dictionary_get_uint64(parameters, vmnet_mtu_key))
+            reportedMax = Int(xpc_dictionary_get_uint64(parameters, vmnet_max_packet_size_key))
         }
-        maxPacketSize = max(maxPacketSize, mtu + 18)
-        allocateBuffers()
 
         queue.sync {
+            if reportedMTU > 0 { mtu = reportedMTU }
+            if reportedMax > 0 { maxPacketSize = reportedMax }
+            maxPacketSize = max(maxPacketSize, mtu + 18)
+            allocateBuffers()
             interface = started
+
+            let accept = DispatchSource.makeReadSource(fileDescriptor: listenFD, queue: queue)
+            accept.setEventHandler { [weak self] in
+                self?.acceptClient(listenFD)
+            }
+            // Die Socket-Datei bleibt liegen: Ein neuer Start derselben VM hat sie womöglich schon
+            // neu angelegt. Aufgeräumt wird vor dem nächsten Start.
+            accept.setCancelHandler {
+                close(listenFD)
+            }
+            accept.resume()
+            acceptSource = accept
         }
 
         _ = vmnet_interface_set_event_callback(started, interface_event_t.VMNET_INTERFACE_PACKETS_AVAILABLE, queue) { [weak self] _, event in
             let estimate = Int(xpc_dictionary_get_uint64(event, vmnet_estimated_packets_available_key))
             self?.forwardFromNetwork(estimate: estimate)
         }
-
-        let source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: queue)
-        source.setEventHandler { [weak self] in
-            self?.forwardFromGuest()
-        }
-        source.resume()
-        queue.sync {
-            readSource = source
-        }
     }
 
     /// Hält die Brücke an und gibt Socket und Schnittstelle frei.
     public func stop() {
-        var stoppedInterface: interface_ref?
-        queue.sync {
-            readSource?.cancel()
-            readSource = nil
-            stoppedInterface = interface
-            interface = nil
-        }
-        if let stoppedInterface {
-            _ = vmnet_interface_set_event_callback(stoppedInterface, interface_event_t.VMNET_INTERFACE_PACKETS_AVAILABLE, nil, nil)
-            let semaphore = DispatchSemaphore(value: 0)
-            let status = vmnet_stop_interface(stoppedInterface, DispatchQueue.global()) { _ in
-                semaphore.signal()
-            }
-            if status == .VMNET_SUCCESS {
-                _ = semaphore.wait(timeout: .now() + 3)
-            }
-        }
-        cleanupSocket()
+        let stopped = queue.sync { shutDownLocked() }
+        PacketRelay.stopInterface(stopped)
     }
 
     /// Schickt einen Rahmen so ins Netz, als käme er vom Gast (für Prüfprogramme).
     public func injectFromGuest(_ frame: [UInt8]) {
         queue.async { [weak self] in
-            guard let self, let interface = self.interface, let packets = self.writePackets,
-                  let iovecs = self.writeIovecs, frame.count <= self.maxPacketSize else { return }
-            frame.withUnsafeBytes { bytes in
-                guard let base = bytes.baseAddress, let target = iovecs[0].iov_base else { return }
-                memcpy(target, base, frame.count)
+            guard let self else { return }
+            frame.withUnsafeBytes { self.queueToNetwork($0) }
+            self.flushToNetwork()
+        }
+    }
+
+    // MARK: Verbindung von QEMU
+
+    private func acceptClient(_ listenFD: Int32) {
+        let fd = Darwin.accept(listenFD, nil, nil)
+        guard fd >= 0 else { return }
+        // QEMU verbindet sich nach einem Neustart neu: alte Verbindung aufgeben.
+        dropClient()
+        UnixStream.configure(fd, sendBuffer: 2 << 20, receiveBuffer: 2 << 20)
+
+        let readSource = DispatchSource.makeReadSource(fileDescriptor: fd, queue: queue)
+        let writeSource = DispatchSource.makeWriteSource(fileDescriptor: fd, queue: queue)
+        let closer = DescriptorCloser(fd: fd, users: 2)
+        readSource.setEventHandler { [weak self] in
+            self?.readFromClient()
+        }
+        writeSource.setEventHandler { [weak self] in
+            self?.flushToGuest()
+        }
+        readSource.setCancelHandler { closer.release() }
+        writeSource.setCancelHandler { closer.release() }
+        readSource.resume()
+        // Die Schreibquelle läuft nur, solange Daten auf QEMU warten.
+        client = Client(fd: fd, readSource: readSource, writeSource: writeSource)
+        stats.connections += 1
+    }
+
+    private func dropClient() {
+        guard let client else { return }
+        self.client = nil
+        if !client.writeSourceActive {
+            // Eine angehaltene Quelle darf nicht freigegeben werden: erst fortsetzen, dann abmelden.
+            client.writeSource.resume()
+        }
+        client.writeSource.cancel()
+        client.readSource.cancel()
+        decoder.reset()
+        outbound.removeAll(keepingCapacity: true)
+        outboundStart = 0
+        pendingWrites = 0
+    }
+
+    // MARK: Gast -> vmnet
+
+    private func readFromClient() {
+        guard let client, let buffer = receiveBuffer else { return }
+        let count = Darwin.read(client.fd, buffer, receiveChunk)
+        if count == 0 {
+            dropClient()
+            return
+        }
+        if count < 0 {
+            if errno != EAGAIN && errno != EINTR { dropClient() }
+            return
+        }
+        do {
+            try decoder.append(UnsafeRawBufferPointer(start: buffer, count: count)) { frame in
+                queueToNetwork(frame)
             }
-            iovecs[0].iov_len = frame.count
-            packets[0].vm_pkt_size = frame.count
-            packets[0].vm_pkt_iovcnt = 1
-            packets[0].vm_flags = 0
-            var count: Int32 = 1
-            if vmnet_write(interface, packets, &count) == .VMNET_SUCCESS, count == 1 {
-                self.stats.framesFromGuest += 1
-            } else {
-                self.stats.droppedFromGuest += 1
-            }
+        } catch {
+            // Kaputter Datenstrom: Verbindung neu aufbauen lassen.
+            dropClient()
+            return
+        }
+        flushToNetwork()
+    }
+
+    private func queueToNetwork(_ frame: UnsafeRawBufferPointer) {
+        guard frame.count >= 14, frame.count <= maxPacketSize, let source = frame.baseAddress,
+              let packets = writePackets, let iovecs = writeIovecs, let target = iovecs[pendingWrites].iov_base else {
+            stats.droppedFromGuest += 1
+            return
+        }
+        if watcher != nil, let address = watcher?.observe(frame) {
+            learnedAddress = address
+            onGuestAddress?(address)
+        }
+        memcpy(target, source, frame.count)
+        iovecs[pendingWrites].iov_len = frame.count
+        packets[pendingWrites].vm_pkt_size = frame.count
+        packets[pendingWrites].vm_pkt_iov = iovecs + pendingWrites
+        packets[pendingWrites].vm_pkt_iovcnt = 1
+        packets[pendingWrites].vm_flags = 0
+        pendingWrites += 1
+        if pendingWrites == batchSize {
+            flushToNetwork()
+        }
+    }
+
+    private func flushToNetwork() {
+        guard pendingWrites > 0 else { return }
+        let queued = pendingWrites
+        pendingWrites = 0
+        guard let interface, let packets = writePackets else {
+            stats.droppedFromGuest += UInt64(queued)
+            return
+        }
+        var count = Int32(queued)
+        if vmnet_write(interface, packets, &count) == .VMNET_SUCCESS {
+            stats.framesFromGuest += UInt64(count)
+            stats.droppedFromGuest += UInt64(queued - Int(count))
+        } else {
+            stats.droppedFromGuest += UInt64(queued)
         }
     }
 
@@ -199,61 +313,92 @@ public final class PacketRelay: @unchecked Sendable {
             }
             var count = Int32(wanted)
             let status = vmnet_read(interface, packets, &count)
-            guard status == .VMNET_SUCCESS, count > 0 else { return }
+            guard status == .VMNET_SUCCESS, count > 0 else { break }
             for index in 0..<Int(count) {
                 let size = packets[index].vm_pkt_size
                 guard let base = iovecs[index].iov_base else { continue }
+                let frame = UnsafeRawBufferPointer(start: base, count: size)
                 if let frameObserver {
-                    frameObserver(Array(UnsafeRawBufferPointer(start: base, count: size)))
+                    frameObserver(Array(frame))
                 }
-                let sent = withUnsafePointer(to: &guestAddress) { pointer in
-                    pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { address in
-                        sendto(fd, base, size, 0, address, socklen_t(MemoryLayout<sockaddr_un>.size))
-                    }
-                }
-                if sent == size {
-                    stats.framesToGuest += 1
-                } else {
-                    // QEMU läuft noch nicht oder ist beendet: Rahmen verwerfen wie ein echtes Netz.
+                guard client != nil, outbound.count - outboundStart + StreamFraming.headerSize + size <= outboundLimit else {
+                    // Keine Verbindung (QEMU startet noch) oder QEMU kommt nicht hinterher.
                     stats.droppedToGuest += 1
+                    continue
                 }
+                outbound.append(contentsOf: StreamFraming.header(length: size))
+                outbound.append(contentsOf: frame)
+                stats.framesToGuest += 1
             }
-            if Int(count) < wanted { return }
+            if Int(count) < wanted { break }
+        }
+        stats.peakBufferedToGuest = max(stats.peakBufferedToGuest, outbound.count - outboundStart)
+        flushToGuest()
+    }
+
+    /// Schreibt wartende Bytes an QEMU, ohne zu blockieren. Was nicht passt, schreibt die
+    /// Schreibquelle, sobald QEMU wieder liest.
+    private func flushToGuest() {
+        guard let client else { return }
+        while outboundStart < outbound.count {
+            let written = outbound.withUnsafeBytes { raw in
+                Darwin.write(client.fd, raw.baseAddress! + outboundStart, raw.count - outboundStart)
+            }
+            if written > 0 {
+                outboundStart += written
+                continue
+            }
+            if written < 0 && errno == EINTR { continue }
+            if written < 0 && errno == EAGAIN {
+                if !client.writeSourceActive {
+                    client.writeSource.resume()
+                    client.writeSourceActive = true
+                }
+                if outboundStart >= outbound.count / 2 {
+                    outbound.removeFirst(outboundStart)
+                    outboundStart = 0
+                }
+                return
+            }
+            dropClient()
+            return
+        }
+        outbound.removeAll(keepingCapacity: true)
+        outboundStart = 0
+        if client.writeSourceActive {
+            client.writeSource.suspend()
+            client.writeSourceActive = false
         }
     }
 
-    // MARK: Gast -> vmnet
+    // MARK: Aufräumen
 
-    private func forwardFromGuest() {
-        guard let interface, let packets = writePackets, let iovecs = writeIovecs else { return }
-        while true {
-            var received = 0
-            while received < batchSize {
-                guard let buffer = iovecs[received].iov_base else { break }
-                let length = recv(fd, buffer, maxPacketSize, MSG_DONTWAIT)
-                if length <= 0 { break }
-                if watcher != nil,
-                   let address = watcher?.observe(UnsafeRawBufferPointer(start: buffer, count: length)) {
-                    learnedAddress = address
-                    onGuestAddress?(address)
-                }
-                iovecs[received].iov_len = length
-                packets[received].vm_pkt_size = length
-                packets[received].vm_pkt_iov = iovecs + received
-                packets[received].vm_pkt_iovcnt = 1
-                packets[received].vm_flags = 0
-                received += 1
-            }
-            guard received > 0 else { return }
-            var count = Int32(received)
-            if vmnet_write(interface, packets, &count) == .VMNET_SUCCESS {
-                stats.framesFromGuest += UInt64(count)
-                stats.droppedFromGuest += UInt64(received - Int(count))
-            } else {
-                stats.droppedFromGuest += UInt64(received)
-            }
-            if received < batchSize { return }
+    /// Meldet Quellen ab und gibt die Schnittstelle zum Anhalten zurück. Nur auf der `queue`
+    /// oder in `deinit` aufrufen.
+    private func shutDownLocked() -> interface_ref? {
+        acceptSource?.cancel()
+        acceptSource = nil
+        dropClient()
+        let stopped = interface
+        interface = nil
+        return stopped
+    }
+
+    private static func stopInterface(_ stopped: interface_ref?) {
+        guard let stopped else { return }
+        _ = vmnet_interface_set_event_callback(stopped, interface_event_t.VMNET_INTERFACE_PACKETS_AVAILABLE, nil, nil)
+        let semaphore = DispatchSemaphore(value: 0)
+        let status = vmnet_stop_interface(stopped, DispatchQueue.global()) { _ in
+            semaphore.signal()
         }
+        if status == .VMNET_SUCCESS {
+            _ = semaphore.wait(timeout: .now() + 3)
+        }
+    }
+
+    private func closeListener(_ fd: Int32) {
+        close(fd)
+        unlink(socketPath)
     }
 
     // MARK: Speicher
@@ -279,6 +424,7 @@ public final class PacketRelay: @unchecked Sendable {
         writeIovecs = wIovecs
         readPackets = rPackets
         writePackets = wPackets
+        receiveBuffer = UnsafeMutableRawPointer.allocate(byteCount: receiveChunk, alignment: 16)
     }
 
     private func freeBuffers() {
@@ -288,20 +434,14 @@ public final class PacketRelay: @unchecked Sendable {
         writeIovecs?.deallocate()
         readStorage?.deallocate()
         writeStorage?.deallocate()
+        receiveBuffer?.deallocate()
         readPackets = nil
         writePackets = nil
         readIovecs = nil
         writeIovecs = nil
         readStorage = nil
         writeStorage = nil
-    }
-
-    private func cleanupSocket() {
-        if fd >= 0 {
-            close(fd)
-            fd = -1
-        }
-        unlink(hostSocketPath)
+        receiveBuffer = nil
     }
 }
 
@@ -311,8 +451,27 @@ private final class StartResult: @unchecked Sendable {
     var parameters: xpc_object_t?
 }
 
-/// Unix-Datagramm-Sockets für die Paketbrücke.
-public enum UnixDatagram {
+/// Schließt einen Deskriptor, sobald alle Dispatch-Quellen darauf abgemeldet sind.
+/// Nur auf einer seriellen Queue benutzt.
+private final class DescriptorCloser: @unchecked Sendable {
+    private let fd: Int32
+    private var users: Int
+
+    init(fd: Int32, users: Int) {
+        self.fd = fd
+        self.users = users
+    }
+
+    func release() {
+        users -= 1
+        if users == 0 {
+            close(fd)
+        }
+    }
+}
+
+/// Unix-Stream-Sockets für die Paketbrücke und das Prüfprogramm.
+public enum UnixStream {
     public static func address(_ path: String) throws -> sockaddr_un {
         var address = sockaddr_un()
         address.sun_family = sa_family_t(AF_UNIX)
@@ -331,52 +490,95 @@ public enum UnixDatagram {
         return address
     }
 
-    /// Legt einen Datagramm-Socket an, bindet ihn an `path` und stellt ihn auf nicht blockierend.
-    public static func bind(_ path: String) throws -> Int32 {
-        let fd = socket(AF_UNIX, SOCK_DGRAM, 0)
+    /// Lauschender Socket an `path` (nicht blockierend). Nur der eigene Benutzer darf sich verbinden.
+    public static func listen(_ path: String) throws -> Int32 {
+        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { throw VMNetworkError.socket("socket", errno) }
         unlink(path)
         var address = try self.address(path)
-        let result = withUnsafePointer(to: &address) { pointer in
+        let bound = withUnsafePointer(to: &address) { pointer in
             pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
                 Darwin.bind(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+            }
+        }
+        guard bound == 0 else {
+            let code = errno
+            close(fd)
+            throw VMNetworkError.socket("bind \(path)", code)
+        }
+        chmod(path, 0o600)
+        guard Darwin.listen(fd, 4) == 0 else {
+            let code = errno
+            close(fd)
+            unlink(path)
+            throw VMNetworkError.socket("listen \(path)", code)
+        }
+        setNonBlocking(fd)
+        return fd
+    }
+
+    /// Verbindet sich mit `path` (blockierend).
+    public static func connect(_ path: String) throws -> Int32 {
+        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        guard fd >= 0 else { throw VMNetworkError.socket("socket", errno) }
+        var address = try self.address(path)
+        let result = withUnsafePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
             }
         }
         guard result == 0 else {
             let code = errno
             close(fd)
-            throw VMNetworkError.socket("bind \(path)", code)
+            throw VMNetworkError.socket("connect \(path)", code)
         }
-        // Größere Puffer: Datagramme bis 64 KB, Warteschlange für Lastspitzen.
-        var sendBuffer: Int32 = 1 << 20
-        var receiveBuffer: Int32 = 4 << 20
-        setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &sendBuffer, socklen_t(MemoryLayout<Int32>.size))
-        setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &receiveBuffer, socklen_t(MemoryLayout<Int32>.size))
-        let flags = fcntl(fd, F_GETFL)
-        _ = fcntl(fd, F_SETFL, flags | O_NONBLOCK)
+        var on: Int32 = 1
+        setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
         return fd
     }
 
-    /// Schickt ein Datagramm an `address`.
+    /// Nicht blockierend, kein SIGPIPE, große Puffer.
+    public static func configure(_ fd: Int32, sendBuffer: Int32, receiveBuffer: Int32) {
+        var send = sendBuffer
+        var receive = receiveBuffer
+        var on: Int32 = 1
+        setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &send, socklen_t(MemoryLayout<Int32>.size))
+        setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &receive, socklen_t(MemoryLayout<Int32>.size))
+        setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
+        setNonBlocking(fd)
+    }
+
+    static func setNonBlocking(_ fd: Int32) {
+        let flags = fcntl(fd, F_GETFL)
+        _ = fcntl(fd, F_SETFL, flags | O_NONBLOCK)
+    }
+
+    /// Schreibt alle Bytes (blockierender Socket).
     @discardableResult
-    public static func send(_ fd: Int32, _ bytes: [UInt8], to address: sockaddr_un) -> Int {
-        var target = address
-        return bytes.withUnsafeBytes { buffer in
-            withUnsafePointer(to: &target) { pointer in
-                pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                    sendto(fd, buffer.baseAddress, buffer.count, 0, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+    public static func writeAll(_ fd: Int32, _ bytes: [UInt8]) -> Bool {
+        var offset = 0
+        return bytes.withUnsafeBytes { raw in
+            while offset < raw.count {
+                let written = Darwin.write(fd, raw.baseAddress! + offset, raw.count - offset)
+                if written > 0 {
+                    offset += written
+                } else if written < 0 && errno == EINTR {
+                    continue
+                } else {
+                    return false
                 }
             }
+            return true
         }
     }
 
-    /// Wartet bis zu `timeout` Sekunden auf ein Datagramm.
-    public static func receive(_ fd: Int32, maxLength: Int = 65536, timeout: TimeInterval) -> [UInt8]? {
+    /// Wartet bis zu `timeout` Sekunden auf Daten und liest, was da ist.
+    public static func read(_ fd: Int32, maxLength: Int = 65536, timeout: TimeInterval) -> [UInt8]? {
         var descriptor = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
         let milliseconds = Int32(max(0, timeout * 1000))
         guard poll(&descriptor, 1, milliseconds) > 0 else { return nil }
         var buffer = [UInt8](repeating: 0, count: maxLength)
-        let length = buffer.withUnsafeMutableBytes { recv(fd, $0.baseAddress, maxLength, 0) }
+        let length = buffer.withUnsafeMutableBytes { Darwin.read(fd, $0.baseAddress, maxLength) }
         guard length > 0 else { return nil }
         return Array(buffer[0..<length])
     }
