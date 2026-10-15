@@ -104,7 +104,7 @@ public final class PacketRelay {
             interface = started
         }
 
-        _ = vmnet_interface_set_event_callback(started, VMNET_INTERFACE_PACKETS_AVAILABLE, queue) { [weak self] _, event in
+        _ = vmnet_interface_set_event_callback(started, interface_event_t.VMNET_INTERFACE_PACKETS_AVAILABLE, queue) { [weak self] _, event in
             let estimate = Int(xpc_dictionary_get_uint64(event, vmnet_estimated_packets_available_key))
             self?.forwardFromNetwork(estimate: estimate)
         }
@@ -129,7 +129,7 @@ public final class PacketRelay {
             interface = nil
         }
         if let stoppedInterface {
-            _ = vmnet_interface_set_event_callback(stoppedInterface, VMNET_INTERFACE_PACKETS_AVAILABLE, nil, nil)
+            _ = vmnet_interface_set_event_callback(stoppedInterface, interface_event_t.VMNET_INTERFACE_PACKETS_AVAILABLE, nil, nil)
             let semaphore = DispatchSemaphore(value: 0)
             let status = vmnet_stop_interface(stoppedInterface, DispatchQueue.global()) { _ in
                 semaphore.signal()
